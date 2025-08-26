@@ -272,8 +272,8 @@ function PrintJobHistoryEditDialog(){
             if (noDatetime){
                 self.printJobItemForEdit.duration(0);
             } else {
-                const startDateTime = Date.parse(self.printJobItemForEdit.printStartDateTimeFormatted());
-                const endDateTime = Date.parse(self.printJobItemForEdit.printEndDateTimeFormatted());
+                const startDateTime = dayjs(self.printJobItemForEdit.printStartDateTimeFormatted(), 'DD.MM.YYYY HH:mm').toDate();
+                const endDateTime = dayjs(self.printJobItemForEdit.printEndDateTimeFormatted(), 'DD.MM.YYYY HH:mm').toDate();
                 const duration = (endDateTime - startDateTime) / 1000;
                 if (duration > 0){
                     self.printJobItemForEdit.duration(duration);

@@ -16,6 +16,8 @@ $(function() {
     var global = this;
     global.componentFactory = new PrintJobComponentFactory();
 
+    dayjs.extend(window.dayjs_plugin_customParseFormat);
+
     // Helper
     var toFloatOrZero = function(floatNumber){
         var result = 0.0
