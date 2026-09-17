@@ -4,30 +4,30 @@
 ### Do not forget to adjust the following variables to your own plugin.
 
 # The plugin's identifier, has to be unique
-plugin_identifier = "PrintJobHistory"
+plugin_identifier = "PrintJobHistoryExtended"
 
 # The plugin's python package, should be "octoprint_<plugin identifier>", has to be unique
-plugin_package = "octoprint_PrintJobHistory"
+plugin_package = "octoprint_PrintJobHistoryExtended"
 
 # The plugin's human readable name. Can be overwritten within OctoPrint's internal data via __plugin_name__ in the
 # plugin module
-plugin_name = "Print Job History"
+plugin_name = "Print Job History Extended"
 
 # The plugin's version. Can be overwritten within OctoPrint's internal data via __plugin_version__ in the plugin module
-plugin_version = "1.18.0"
+plugin_version = "1.18.0.dev5"
 
 # The plugin's description. Can be overwritten within OctoPrint's internal data via __plugin_description__ in the plugin
 # module
 plugin_description = """Collects all print jobs and stores the job data into a database"""
 
 # The plugin's author. Can be overwritten within OctoPrint's internal data via __plugin_author__ in the plugin module
-plugin_author = "vojtakaniok"
+plugin_author = "Ajimaru"
 
 # The plugin's author's mail address.
-plugin_author_email = "vojtech@kaniok.com"
+plugin_author_email = "ajimaru_gdr@pm.me"
 
 # The plugin's homepage URL. Can be overwritten within OctoPrint's internal data via __plugin_url__ in the plugin module
-plugin_url = "https://github.com/vojtakaniok/OctoPrint-PrintJobHistory"
+plugin_url = "https://github.com/Ajimaru/OctoPrint-PrintJobHistoryExtended"
 
 # The plugin's license. Can be overwritten within OctoPrint's internal data via __plugin_license__ in the plugin module
 plugin_license = "AGPLv3"

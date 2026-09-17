@@ -3,7 +3,7 @@ services:
   postgres:
     image: "postgres" # use latest official postgres version
     environment:
-      - POSTGRES_DB:printjobhistory_database
+      - POSTGRES_DB:printjobhistoryextended_database
       - POSTGRES_USER:Olli
       - POSTGRES_PASSWORD:illO
 #    env_file:

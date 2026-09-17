@@ -7,7 +7,7 @@
 - #xxx
 
 ## Counter
-![downloaded](https://img.shields.io/github/downloads/vojtakaniok/OctoPrint-PrintJobHistory/xxx/total)
+![downloaded](https://img.shields.io/github/downloads/Ajimaru/OctoPrint-PrintJobHistoryExtended/xxx/total)
 
 ### NOTE: this plugin has been abandoned by the original creator and adopted here by a new maintainer
 
