@@ -8,49 +8,46 @@
 #  - Download Zip
 
 name: Build Plugin Release - Action
-on: [push]
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
 jobs:
   Build-Release-ZIP-Action:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
-      - run: echo "Read current plugin version..."
-      - run: export PLUGIN_VERSION=$(cat setup.py | grep 'plugin_version = "*"' | cut -d '"' -f2)
-      - run: echo "Plugin Version  $PLUGIN_VERSION ${PLUGIN_VERSION}"
+      - name: version
+        id: version
+        run: |
+          # the tag is what is being released; setup.py only serves as a cross-check
+          tag_version=${GITHUB_REF_NAME#v}
+          setup_version=$(grep '^plugin_version' setup.py | cut -d '"' -f2)
+          echo "version=$tag_version" >> $GITHUB_OUTPUT
+          echo "Tag: $tag_version / setup.py: $setup_version"
+          if [ "$tag_version" != "$setup_version" ]; then
+            echo "::warning::Tag $tag_version does not match plugin_version $setup_version in setup.py"
+          fi
 
       - run: echo "Build ZIP"
       - run: zip -r main.zip * -i '\octoprint_*' 'translations' 'README.md' 'requirements.txt' 'setup.py'
+
       - name: List files in the repository
-        run: |
-          ls ${{ github.workspace }}
-
-      - name: version
-        run: echo "version=$(cat setup.py | grep 'plugin_version = "*"' | cut -d '"' -f2)" >> $GITHUB_OUTPUT
-        id: version
-
-      - name: Repository and Branch name
-        id: branch
-        run: |
-               export branch_name=${GITHUB_REF##*/}
-               echo "branch_name=$branch_name" >> $GITHUB_OUTPUT
-               echo running on branch $branch_name
-               export repo_name=${GITHUB_REPOSITORY#*/}
-               echo "repo_name=$repo_name" >> $GITHUB_OUTPUT
-
+        run: ls ${{ github.workspace }}
 
       - name: release
-        uses: actions/create-release@latest
-        id: create_release
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+        uses: softprops/action-gh-release@v2
         with:
           draft: true
-          commitish: ${{ steps.branch.outputs.branch_name }}
           prerelease: false
-          release_name: V${{ steps.version.outputs.version }}-draft
-          tag_name: ${{ steps.version.outputs.version }}-draft
+          name: V${{ steps.version.outputs.version }}
+          files: main.zip
           body: |
             ## [BugFix]
             - #xxx
@@ -59,28 +56,9 @@ jobs:
             - #xxx
 
             ## Counter
-            ![downloaded](https://img.shields.io/github/downloads/Ajimaru/${{ steps.branch.outputs.repo_name }}/${{ steps.version.outputs.version }}/total)
+            ![downloaded](https://img.shields.io/github/downloads/${{ github.repository }}/${{ github.ref_name }}/total)
 
-            ## *NOTE: this plugin has been abandoned by the original creator and adopted here by a new maintainer*
-
-            **This plugin is under new management** and will focus on critical bug fixes to start. Please bear with me as I get acclimated to this new plugin.
-
-            If you would like to support these new efforts, please consider buying me a coffee or two. Thank you!
-
-            [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/D1D21B0LA9)
-#          body_path: RELEASE_TEMPLATE.md
-
-      - name: upload main.zip to release
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: main.zip
-          asset_name: main.zip
-          asset_content_type: application/gzip
-
-      - name: download main.zip
-        run: curl -O -J -L -v https://github.com/Ajimaru/${{ steps.branch.outputs.repo_name }}/releases/download/${{ steps.version.outputs.version }}/main.zip
+            This is a fork of [OctoPrint-PrintJobHistory](https://github.com/vojtakaniok/OctoPrint-PrintJobHistory),
+            renamed so it can be installed alongside the original plugin.
 
       - run: echo "🍏 This job's status is ${{ job.status }}."
