@@ -2,6 +2,24 @@
 <form id="settings_printJobHistoryExtended" class="form-horizontal" >
     <h3>Print Job History Extended  <small>{{ _('Version') }}: <span data-bind="text: pluginSettings.installed_version"></span></small></h3>
 
+    <!-- Shown once while data of a previous PrintJobHistory install is still unadopted -->
+    <div class="alert alert-info" data-bind="visible: legacyMigration.status().available && !legacyMigration.status().done()">
+        <b>Data from a previous Print Job History installation was found.</b>
+        You can copy its print jobs, snapshots and settings into this plugin.
+        The other plugin keeps its own data.
+        <button class="btn btn-primary btn-small pull-right" data-bind="click: legacyMigration.showDialog">Migrate&hellip;</button>
+    </div>
+
+    <!-- The migration is only finished once the server has reopened the database -->
+    <div class="alert alert-warning" data-bind="visible: legacyMigration.status().restartRequired">
+        <b>Restart needed to finish the migration.</b>
+        The migrated print jobs appear once the OctoPrint server has restarted.
+        <button class="btn btn-primary btn-small pull-right"
+                data-bind="enable: !legacyMigration.restartInProgress(), click: legacyMigration.restartServer">
+            Restart OctoPrint&hellip;
+        </button>
+    </div>
+
     <div class="tabbable"> <!-- Only required for left/right tabs -->
         <ul class="nav nav-tabs">
             <li class="active"><a href="#tab-pjhe-General" data-toggle="tab">General</a></li>
@@ -490,6 +508,26 @@ M300 S440 P100 ;Playing a beep
             </div>
             <!-- STORAGE - TAB -->
             <div class="tab-pane" id="tab-pjhe-Storage">
+
+                <h4>Migration from Print Job History</h4>
+                <div class="control-group">
+                    <div class="controls">
+                        <span data-bind="visible: legacyMigration.status().available">
+                            Copy print jobs, snapshots and settings from a previous
+                            <b>PrintJobHistory</b> installation into this plugin.
+                            The originals are kept.
+                        </span>
+                        <span data-bind="visible: !legacyMigration.status().available">
+                            No previous PrintJobHistory installation was found.
+                        </span>
+                        <div style="margin-top:8px">
+                            <button class="btn" data-bind="enable: legacyMigration.status().available, click: legacyMigration.showDialog">
+                                Open migration dialog&hellip;
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <hr/>
 
 <!--                <h4>Instance Name</h4>-->
 <!--                <div class="control-group" >-->

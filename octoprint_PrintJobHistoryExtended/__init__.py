@@ -14,8 +14,10 @@ import math
 import flask
 import os
 import shutil
+import sqlite3
 import tempfile
 import json
+from urllib.request import pathname2url
 
 from octoprint_PrintJobHistoryExtended.common import CSVExportImporter
 from octoprint_PrintJobHistoryExtended.models.FilamentModel import FilamentModel
@@ -33,6 +35,39 @@ from .DatabaseManager import DatabaseManager
 from .CameraManager import CameraManager
 
 from octoprint_PrintJobHistoryExtended.common import StringUtils, DateTimeUtils
+
+# Identifier this plugin used before it was renamed to "PrintJobHistoryExtended". Both the
+# data folder (~/.octoprint/data/<identifier>/) and the settings namespace
+# (plugins.<identifier>) are derived from it, so an existing install is only reachable
+# under the old name - see _performLegacyMigration().
+LEGACY_IDENTIFIER = "PrintJobHistory"
+
+LEGACY_DATABASE_FILE_NAME = "printJobHistory.db"
+DATABASE_FILE_NAME = "printJobHistoryExtended.db"
+
+# Records what a migration overwrote, so it can be taken back. One file per migration
+# kind, so the database and the settings can be undone independently - they are separate
+# actions and undoing one must not silently drop the other's record.
+LEGACY_UNDO_FILE_NAMES = {
+	"database": "legacy-migration-undo-database.json",
+	"settings": "legacy-migration-undo-settings.json",
+}
+
+# Written when a migration replaced the database file, removed once the server has come up
+# again. The plugin opens its database at startup and keeps the handle, so a file swapped
+# underneath it stays invisible until a restart - the marker is what tells the UI to ask
+# for one. It has to outlive the process, hence a file rather than an attribute.
+LEGACY_RESTART_REQUIRED_FILE_NAME = "legacy-migration-restart-required"
+
+# Settings that must not be carried over: the two path keys point into the *old* plugin's
+# data folder and would send this install back to the legacy database, and the version
+# describes the installed plugin rather than a user choice.
+LEGACY_SETTINGS_NOT_MIGRATABLE = frozenset([
+	SettingsKeys.SETTINGS_KEY_DATABASE_PATH,
+	SettingsKeys.SETTINGS_KEY_SNAPSHOT_PATH,
+	"installed_version",
+])
+
 
 class PrintJobHistoryExtendedPlugin(
 	PrintJobHistoryExtendedAPI,
@@ -1204,6 +1239,10 @@ class PrintJobHistoryExtendedPlugin(
 	# from logging.handlers import QueueListener
 
 	def on_after_startup(self):
+		# the database was reopened as part of this startup, so whatever a migration
+		# replaced is now actually in use - the restart it asked for has happened
+		self._setRestartRequired(False)
+
 		# check if needed plugins were available
 		self._checkAndLoadThirdPartyPluginInfos(False) # don't inform the client, because client is maybe not opened
 
@@ -1494,6 +1533,16 @@ class PrintJobHistoryExtendedPlugin(
 		]
 
 
+	def get_template_vars(self):
+		# the banner listens to legacyMigrationPending: something to migrate, not migrated yet
+		migrationAvailable = self._isLegacyMigrationAvailable()
+		return dict(
+			legacyMigrationAvailable=migrationAvailable,
+			legacyMigrationPending=(migrationAvailable and not self._isLegacyMigrationDone()),
+			legacySettingsAvailable=self._hasLegacySettings()
+		)
+
+
 	##~~ AssetPlugin mixin
 	def get_assets(self):
 		# Define your plugin's asset files to automatically include in the
@@ -1510,6 +1559,7 @@ class PrintJobHistoryExtendedPlugin(
 				"js/PrintJobHistoryExtended-StatisticDialog.js",
 				"js/PrintJobHistoryExtended-SettingsCompareDialog.js",
 				"js/PrintJobHistoryExtended-ComponentFactory.js",
+				"js/PrintJobHistoryExtended-LegacyMigration.js",
 				"js/quill.min.js",
 				"js/dayjs.min.js",
 				"js/plugin/customParseFormat.min.js",
@@ -1563,6 +1613,489 @@ class PrintJobHistoryExtendedPlugin(
 				pip="https://github.com/Ajimaru/OctoPrint-PrintJobHistoryExtended/releases/download/{target_version}/main.zip"
 			)
 		)
+
+
+	##~~ Legacy migration (data of a previous "PrintJobHistory" install)
+
+	def _getLegacyDataFolder(self):
+		"""
+		Path of the data folder left behind under the plugin's previous identifier, or
+		None if there is none. Pure lookup, no side effects.
+		"""
+		legacyDataFolder = os.path.join(self._settings.getBaseFolder("data"), LEGACY_IDENTIFIER)
+		if not os.path.isdir(legacyDataFolder):
+			return None
+		return legacyDataFolder
+
+
+	def _hasLegacySettings(self):
+		return bool(self._settings.global_get(["plugins", LEGACY_IDENTIFIER]))
+
+
+	def _isLegacyMigrationAvailable(self):
+		"""Whether there is anything worth migrating from a previous install."""
+		legacyDataFolder = self._getLegacyDataFolder()
+		if legacyDataFolder is not None:
+			if os.path.isfile(os.path.join(legacyDataFolder, LEGACY_DATABASE_FILE_NAME)):
+				return True
+		return self._hasLegacySettings()
+
+
+	def _databaseHoldsPrintJobs(self, databaseFile):
+		"""
+		Whether the SQLite file holds at least one print job.
+
+		Read directly via sqlite3 rather than through the DatabaseManager: the plugin keeps
+		its own database open, and this has to inspect a file that may not be the connected
+		one. Anything unreadable counts as "no jobs" - an unusable file is not worth
+		guarding against being replaced.
+		"""
+		if not os.path.isfile(databaseFile):
+			return False
+		try:
+			connection = sqlite3.connect(databaseFile)
+			try:
+				return connection.execute("SELECT COUNT(*) FROM pjh_printjobmodel").fetchone()[0] > 0
+			finally:
+				connection.close()
+		except Exception:
+			self._logger.exception("Could not read '" + str(databaseFile) + "', treating it as empty")
+			return False
+
+
+	def _readLegacyDatabasePreview(self, databaseFile, jobLimit=10):
+		"""
+		Summary of what the legacy database holds, for the confirmation dialog.
+
+		Opened read-only (sqlite3 URI mode=ro): the file still belongs to the old plugin,
+		which may well be running, and a preview must not create a journal next to it.
+		"""
+		preview = {
+			"readable": False,
+			"jobCount": 0,
+			"schemeVersion": None,
+			"firstJobDate": None,
+			"lastJobDate": None,
+			"jobs": [],
+			"moreJobs": 0,
+		}
+		if not os.path.isfile(databaseFile):
+			return preview
+
+		try:
+			uri = "file:%s?mode=ro" % pathname2url(databaseFile)
+			connection = sqlite3.connect(uri, uri=True)
+			try:
+				preview["jobCount"] = connection.execute("SELECT COUNT(*) FROM pjh_printjobmodel").fetchone()[0]
+				dateRow = connection.execute(
+					"SELECT MIN(printStartDateTime), MAX(printStartDateTime) FROM pjh_printjobmodel"
+				).fetchone()
+				if dateRow is not None:
+					preview["firstJobDate"] = dateRow[0]
+					preview["lastJobDate"] = dateRow[1]
+				for row in connection.execute(
+					"SELECT fileName, printStartDateTime, printStatusResult FROM pjh_printjobmodel "
+					"ORDER BY printStartDateTime DESC LIMIT ?", (jobLimit,)
+				):
+					preview["jobs"].append({
+						"fileName": row[0],
+						"printStartDateTime": row[1],
+						"printStatusResult": row[2],
+					})
+				preview["moreJobs"] = max(0, preview["jobCount"] - len(preview["jobs"]))
+				try:
+					schemeRow = connection.execute(
+						"SELECT value FROM pjh_pluginmetadatamodel WHERE key = 'databaseSchemeVersion'"
+					).fetchone()
+					if schemeRow is not None:
+						preview["schemeVersion"] = schemeRow[0]
+				except Exception:
+					# a database without the metadata table is still worth previewing
+					pass
+				preview["readable"] = True
+			finally:
+				connection.close()
+		except Exception:
+			# An unreadable file simply cannot be summarised; the dialog says so while
+			# still offering the copy.
+			self._logger.exception("Could not read legacy database '" + str(databaseFile) + "'")
+
+		return preview
+
+
+	def _classifyLegacyFile(self, entryName):
+		"""
+		What kind of entry this is, which decides whether the dialog preselects it. Unlike
+		caches, snapshots are user data that cannot be regenerated, so they are preselected
+		together with the database itself.
+		"""
+		if entryName == LEGACY_DATABASE_FILE_NAME:
+			return "database"
+		if entryName == "snapshots":
+			return "snapshots"
+		if entryName.startswith("printJobHistory-backup") or entryName.endswith(".csv"):
+			return "backup"
+		return "other"
+
+
+	def _getLegacyFileEntries(self):
+		"""Entries of the legacy data folder, annotated for the migration dialog."""
+		legacyDataFolder = self._getLegacyDataFolder()
+		if legacyDataFolder is None:
+			return []
+
+		entries = []
+		for entryName in sorted(os.listdir(legacyDataFolder)):
+			path = os.path.join(legacyDataFolder, entryName)
+			kind = self._classifyLegacyFile(entryName)
+			try:
+				if os.path.isdir(path):
+					size = sum(
+						os.path.getsize(os.path.join(root, name))
+						for root, _dirs, files in os.walk(path)
+						for name in files
+					)
+				else:
+					size = os.path.getsize(path)
+			except OSError:
+				size = 0
+			entries.append({
+				"name": entryName,
+				"kind": kind,
+				"size": size,
+				"isDirectory": os.path.isdir(path),
+				"preselected": kind in ("database", "snapshots"),
+			})
+		return entries
+
+
+	def _getUndoFilePath(self, undoKind):
+		return os.path.join(self.get_plugin_data_folder(), LEGACY_UNDO_FILE_NAMES[undoKind])
+
+
+	def _getRestartRequiredFilePath(self):
+		return os.path.join(self.get_plugin_data_folder(), LEGACY_RESTART_REQUIRED_FILE_NAME)
+
+
+	def _isRestartRequired(self):
+		return os.path.isfile(self._getRestartRequiredFilePath())
+
+
+	def _setRestartRequired(self, required):
+		path = self._getRestartRequiredFilePath()
+		try:
+			if required:
+				with open(path, "w") as marker:
+					marker.write(datetime.datetime.now().isoformat(timespec="seconds"))
+			elif os.path.isfile(path):
+				os.remove(path)
+		except Exception:
+			# Only drives a hint in the UI - never worth failing the surrounding action for.
+			self._logger.exception("Could not update the restart-required marker")
+
+
+	def _isLegacyMigrationUndoAvailable(self, undoKind):
+		return os.path.isfile(self._getUndoFilePath(undoKind))
+
+
+	def _isLegacyMigrationDone(self):
+		"""
+		Whether a migration has already run. Used to retire the banner: the legacy folder is
+		deliberately kept (we copy, never move), so its mere presence would keep the hint up
+		forever. An undo brings the banner back, which is the point.
+		"""
+		return any(self._isLegacyMigrationUndoAvailable(kind) for kind in LEGACY_UNDO_FILE_NAMES)
+
+
+	def _writeUndoRecord(self, undoKind, replacedFiles, previousSettings):
+		record = {
+			"timestamp": datetime.datetime.now().isoformat(timespec="seconds"),
+			"replacedFiles": replacedFiles,
+			"previousSettings": previousSettings,
+		}
+		try:
+			with open(self._getUndoFilePath(undoKind), "w") as undoFile:
+				json.dump(record, undoFile, indent=2)
+		except Exception:
+			# Losing the undo record must not fail the migration itself - the data is
+			# already copied at this point, and the legacy folder is still intact.
+			self._logger.exception("Could not write the migration undo record")
+
+
+	def _captureSettingsForUndo(self, keys):
+		"""
+		Current value of each key before it is overwritten. A key without a value of its own
+		is recorded as None, so the undo removes it again rather than writing a value the
+		user never had.
+		"""
+		captured = {}
+		for key in keys:
+			try:
+				captured[key] = self._settings.get([key])
+			except Exception:
+				captured[key] = None
+		return captured
+
+
+	def _performLegacyMigration(self, overwriteExisting=False, includeSettings=True, fileNames=None):
+		"""
+		Copies data and (optionally) settings of a previous PrintJobHistory install into
+		this plugin's own data folder / settings namespace. Triggered by the user, never
+		automatically - it touches user data.
+
+		The legacy folder is left untouched (copy, not move), so the old install stays
+		usable. Files that would be overwritten are kept as "<name>.pre-migration-<stamp>"
+		and recorded for _undoLegacyMigration().
+		"""
+		def failure(errorMessage, conflict=False):
+			return {
+				"success": False,
+				"errorMessage": errorMessage,
+				"conflict": conflict,
+				"copiedFiles": 0,
+				"settingsMigrated": False,
+			}
+
+		legacyDataFolder = self._getLegacyDataFolder()
+		legacySettings = self._settings.global_get(["plugins", LEGACY_IDENTIFIER])
+
+		if legacyDataFolder is None and not legacySettings:
+			return failure("No previous PrintJobHistory installation found. Nothing to migrate.")
+
+		# A second run would copy the same data over the already migrated database - and
+		# since the plugin keeps that database open until it restarts, the conflict guard
+		# below cannot see the jobs it already holds. Undo first, then migrate again.
+		#
+		# Only the database record blocks here, not _isLegacyMigrationDone(): undoing the
+		# data while keeping the migrated settings is a legitimate state, and it must not
+		# leave the migration permanently barred.
+		if self._isLegacyMigrationUndoAvailable("database") and not overwriteExisting:
+			return failure(
+				"This installation has already been migrated. Undo the previous migration "
+				"first if you want to run it again.",
+				conflict=True
+			)
+
+		newDataFolder = self.get_plugin_data_folder()
+		databaseIsSelected = (
+			legacyDataFolder is not None
+			and os.path.isfile(os.path.join(legacyDataFolder, LEGACY_DATABASE_FILE_NAME))
+			and (fileNames is None or LEGACY_DATABASE_FILE_NAME in fileNames)
+		)
+
+		# Only a database holding actual jobs is worth protecting. The plugin creates an
+		# empty one on first start, so testing for the file alone would confront every user
+		# with a data-loss warning that does not apply to them.
+		if databaseIsSelected and not overwriteExisting:
+			if self._databaseHoldsPrintJobs(os.path.join(newDataFolder, DATABASE_FILE_NAME)):
+				return failure(
+					"This installation already has its own database with print jobs in it. "
+					"Migrating would replace it with the one from the previous PrintJobHistory install.",
+					conflict=True
+				)
+
+		timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+		replacedFiles = []
+		copiedFiles = 0
+		try:
+			if legacyDataFolder is not None:
+				if not os.path.exists(newDataFolder):
+					os.makedirs(newDataFolder)
+				for entryName in os.listdir(legacyDataFolder):
+					if fileNames is not None and entryName not in fileNames:
+						continue
+					sourcePath = os.path.join(legacyDataFolder, entryName)
+					# the database is the one file that changes its name on the way over
+					targetName = DATABASE_FILE_NAME if entryName == LEGACY_DATABASE_FILE_NAME else entryName
+					targetPath = os.path.join(newDataFolder, targetName)
+
+					# keep whatever is about to be replaced, so the undo has something to put back
+					if os.path.exists(targetPath) and not os.path.isdir(targetPath):
+						backupName = "%s.pre-migration-%s" % (targetName, timestamp)
+						os.rename(targetPath, os.path.join(newDataFolder, backupName))
+						replacedFiles.append({"name": targetName, "backupName": backupName})
+
+					if os.path.isdir(sourcePath):
+						shutil.copytree(sourcePath, targetPath, dirs_exist_ok=True)
+					else:
+						shutil.copy2(sourcePath, targetPath)
+					copiedFiles += 1
+				self._logger.info(
+					"Migrated %s entries from '%s' to '%s' (originals kept)"
+					% (copiedFiles, legacyDataFolder, newDataFolder)
+				)
+		except Exception as e:
+			self._logger.exception("Legacy data migration failed")
+			return failure("Could not copy the data folder: " + str(e))
+
+		settingsMigrated = False
+		previousSettings = {}
+		try:
+			if includeSettings and legacySettings:
+				migratableKeys = [k for k in legacySettings.keys() if k not in LEGACY_SETTINGS_NOT_MIGRATABLE]
+				previousSettings = self._captureSettingsForUndo(migratableKeys)
+				for key in migratableKeys:
+					self._settings.set([key], legacySettings[key])
+				self._settings.save()
+				settingsMigrated = True
+				self._logger.info(
+					"Migrated settings from 'plugins.%s' to 'plugins.%s'"
+					% (LEGACY_IDENTIFIER, self._identifier)
+				)
+		except Exception as e:
+			self._logger.exception("Legacy settings migration failed")
+			return failure("Data was copied, but the settings could not be migrated: " + str(e))
+
+		# Written whenever something was actually migrated, not only when files were
+		# replaced: migrating into an empty install overwrites nothing, but it still has to
+		# count as done - otherwise the banner would never retire for exactly the users the
+		# migration is meant for.
+		if copiedFiles or replacedFiles or previousSettings:
+			self._writeUndoRecord("database", replacedFiles, {})
+			if settingsMigrated:
+				self._writeUndoRecord("settings", [], previousSettings)
+
+		# The database this plugin has open is now a different file on disk; until the
+		# server restarts it keeps serving the old one, so the migrated jobs would not show
+		# up and the user would think the migration failed.
+		restartRequired = databaseIsSelected
+		if restartRequired:
+			self._setRestartRequired(True)
+
+		return {
+			"success": True,
+			"errorMessage": None,
+			"conflict": False,
+			"copiedFiles": copiedFiles,
+			"settingsMigrated": settingsMigrated,
+			"restartRequired": restartRequired,
+		}
+
+
+	def _undoLegacyMigration(self, undoKind):
+		"""
+		Puts back what the named migration replaced: the saved files and the settings values
+		it overwrote. Keys that had no value before are removed again. The two kinds are
+		independent.
+		"""
+		undoFilePath = self._getUndoFilePath(undoKind)
+		if not os.path.isfile(undoFilePath):
+			return {"success": False, "errorMessage": "There is nothing to undo.", "restoredFiles": 0, "restoredSettings": 0}
+
+		try:
+			with open(undoFilePath) as undoFile:
+				record = json.load(undoFile)
+		except Exception as e:
+			self._logger.exception("Could not read the migration undo record")
+			return {"success": False, "errorMessage": "Could not read the undo record: " + str(e), "restoredFiles": 0, "restoredSettings": 0}
+
+		dataFolder = self.get_plugin_data_folder()
+		restoredFiles = 0
+		try:
+			for entry in record.get("replacedFiles", []):
+				backupPath = os.path.join(dataFolder, entry["backupName"])
+				targetPath = os.path.join(dataFolder, entry["name"])
+				if not os.path.isfile(backupPath):
+					continue
+				if os.path.exists(targetPath):
+					os.remove(targetPath)
+				os.rename(backupPath, targetPath)
+				restoredFiles += 1
+		except Exception as e:
+			self._logger.exception("Restoring the replaced files failed")
+			return {"success": False, "errorMessage": "Could not restore the files: " + str(e), "restoredFiles": restoredFiles, "restoredSettings": 0}
+
+		restoredSettings = 0
+		try:
+			previousSettings = record.get("previousSettings", {})
+			for key, value in previousSettings.items():
+				# None means "had no value of its own" - set(None) makes OctoPrint drop the
+				# key again, which is exactly the state we are restoring
+				self._settings.set([key], value)
+				restoredSettings += 1
+			if previousSettings:
+				self._settings.save()
+		except Exception as e:
+			self._logger.exception("Restoring the previous settings failed")
+			return {"success": False, "errorMessage": "Files were restored, but the settings were not: " + str(e), "restoredFiles": restoredFiles, "restoredSettings": restoredSettings}
+
+		try:
+			os.remove(undoFilePath)
+		except OSError:
+			self._logger.exception("Could not remove the migration undo record")
+
+		# Same reasoning as after a migration: the database file changed underneath the open
+		# handle, so what the plugin serves and what is on disk only line up after a restart.
+		restartRequired = restoredFiles > 0
+		if restartRequired:
+			self._setRestartRequired(True)
+
+		self._logger.info(
+			"Undid the last migration: %s file(s), %s setting(s) restored" % (restoredFiles, restoredSettings)
+		)
+		return {
+			"success": True,
+			"errorMessage": None,
+			"restoredFiles": restoredFiles,
+			"restoredSettings": restoredSettings,
+			"restartRequired": restartRequired,
+		}
+
+
+	def _getLegacySettingsComparison(self):
+		"""
+		Per-key comparison of the old plugin's settings against this install's effective
+		values, for the settings tab of the migration dialog.
+
+		OctoPrint only stores settings that differ from their default, so the legacy
+		namespace holds a handful of keys while the plugin knows dozens. Only the stored
+		ones are worth showing here - the rest are identical defaults on both sides.
+		"""
+		legacySettings = self._settings.global_get(["plugins", LEGACY_IDENTIFIER]) or {}
+		comparison = []
+		for key in sorted(legacySettings.keys()):
+			if key in LEGACY_SETTINGS_NOT_MIGRATABLE:
+				continue
+			legacyValue = legacySettings.get(key)
+			try:
+				currentValue = self._settings.get([key])
+			except Exception:
+				currentValue = None
+			comparison.append({
+				"key": key,
+				"legacyValue": legacyValue,
+				"legacyValueText": StringUtils.to_native_str(legacyValue) if legacyValue is not None else "",
+				"currentValue": currentValue,
+				"currentValueText": StringUtils.to_native_str(currentValue) if currentValue is not None else "",
+				"differs": legacyValue != currentValue,
+			})
+		return comparison
+
+
+	def _applyLegacySettings(self, keys):
+		"""Writes only the named keys from the legacy namespace into this plugin's own."""
+		legacySettings = self._settings.global_get(["plugins", LEGACY_IDENTIFIER]) or {}
+		selectedValues = {}
+		for key in keys:
+			if key in LEGACY_SETTINGS_NOT_MIGRATABLE:
+				continue
+			if key in legacySettings:
+				selectedValues[key] = legacySettings[key]
+
+		if not selectedValues:
+			return {"success": False, "errorMessage": "None of the selected settings exist in the previous installation.", "appliedSettings": 0}
+
+		try:
+			previousSettings = self._captureSettingsForUndo(selectedValues.keys())
+			for key, value in selectedValues.items():
+				self._settings.set([key], value)
+			self._settings.save()
+			self._writeUndoRecord("settings", [], previousSettings)
+		except Exception as e:
+			self._logger.exception("Applying legacy settings failed")
+			return {"success": False, "errorMessage": "Could not apply the settings: " + str(e), "appliedSettings": 0}
+
+		return {"success": True, "errorMessage": None, "appliedSettings": len(selectedValues)}
 
 
 	# Increase upload-size (default 100kb) for uploading images

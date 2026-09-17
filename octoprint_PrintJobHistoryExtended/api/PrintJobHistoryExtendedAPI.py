@@ -946,3 +946,64 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
             printJobTemplateName=defaultReportTemplateName
         )
 
+
+    #######################################################################################   LEGACY MIGRATION
+    # Adopting the data of a previous "PrintJobHistory" install. Implemented in the plugin
+    # class; these routes only expose it.
+
+    @octoprint.plugin.BlueprintPlugin.route("/legacyMigrationStatus", methods=["GET"])
+    def get_legacyMigrationStatus(self):
+        legacyDataFolder = self._getLegacyDataFolder()
+        return flask.jsonify(
+            available=self._isLegacyMigrationAvailable(),
+            done=self._isLegacyMigrationDone(),
+            hasSettings=self._hasLegacySettings(),
+            dataFolder=legacyDataFolder,
+            files=self._getLegacyFileEntries(),
+            databaseUndoAvailable=self._isLegacyMigrationUndoAvailable("database"),
+            settingsUndoAvailable=self._isLegacyMigrationUndoAvailable("settings"),
+            restartRequired=self._isRestartRequired()
+        )
+
+
+    @octoprint.plugin.BlueprintPlugin.route("/legacyDatabasePreview", methods=["GET"])
+    def get_legacyDatabasePreview(self):
+        legacyDataFolder = self._getLegacyDataFolder()
+        if legacyDataFolder is None:
+            return flask.jsonify(readable=False, jobCount=0, jobs=[], moreJobs=0)
+        databaseFile = os.path.join(legacyDataFolder, "printJobHistory.db")
+        return flask.jsonify(self._readLegacyDatabasePreview(databaseFile))
+
+
+    @octoprint.plugin.BlueprintPlugin.route("/legacySettingsComparison", methods=["GET"])
+    def get_legacySettingsComparison(self):
+        return flask.jsonify(settings=self._getLegacySettingsComparison())
+
+
+    @octoprint.plugin.BlueprintPlugin.route("/migrateFromLegacy", methods=["PUT"])
+    def put_migrateFromLegacy(self):
+        jsonData = request.json if request.is_json else {}
+        result = self._performLegacyMigration(
+            overwriteExisting=jsonData.get("overwriteExisting", False),
+            includeSettings=jsonData.get("includeSettings", True),
+            fileNames=jsonData.get("fileNames", None)
+        )
+        # a conflict is a decision for the user to make, not a server error
+        return flask.jsonify(result), (200 if result["success"] else 409 if result.get("conflict") else 500)
+
+
+    @octoprint.plugin.BlueprintPlugin.route("/applyLegacySettings", methods=["PUT"])
+    def put_applyLegacySettings(self):
+        jsonData = request.json if request.is_json else {}
+        keys = jsonData.get("keys", [])
+        result = self._applyLegacySettings(keys)
+        return flask.jsonify(result), (200 if result["success"] else 400)
+
+
+    @octoprint.plugin.BlueprintPlugin.route("/undoLegacyMigration/<undoKind>", methods=["PUT"])
+    def put_undoLegacyMigration(self, undoKind):
+        if undoKind not in ("database", "settings"):
+            return flask.jsonify(success=False, errorMessage="Unknown undo kind."), 400
+        result = self._undoLegacyMigration(undoKind)
+        return flask.jsonify(result), (200 if result["success"] else 400)
+

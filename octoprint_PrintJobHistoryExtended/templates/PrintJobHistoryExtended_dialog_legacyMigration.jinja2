@@ -1,0 +1,134 @@
+<!-- Legacy-Migration-Dialog: adopt the data of a previous "PrintJobHistory" install -->
+<div id="dialog_printJobHistoryExtended_legacyMigration" class="modal hide fade" data-bind="with: legacyMigration">
+    <div class="modal-header">
+        <button type="button" class="close" data-dismiss="modal" aria-hidden="true">&times;</button>
+        <h3>Migrate from Print Job History</h3>
+    </div>
+
+    <div class="modal-body">
+
+        <div data-bind="visible: !status().available">
+            <p>No previous <b>PrintJobHistory</b> installation was found. There is nothing to migrate.</p>
+        </div>
+
+        <div data-bind="visible: status().available">
+
+            <!-- The restart is what actually puts the migrated database into use -->
+            <div class="alert alert-warning" data-bind="visible: status().restartRequired">
+                <b>A restart is needed to finish the migration.</b>
+                The plugin keeps its database open while running, so the copied print jobs
+                only appear after the OctoPrint server has restarted.
+                <div style="margin-top:8px">
+                    <button class="btn btn-primary"
+                            data-bind="enable: !restartInProgress(), click: restartServer">
+                        <i class="icon-spinner icon-spin" data-bind="visible: restartInProgress"></i>
+                        Restart OctoPrint now
+                    </button>
+                    <small style="margin-left:6px">Not while a print is running.</small>
+                </div>
+            </div>
+
+            <div class="alert alert-success" data-bind="visible: status().done() && !status().restartRequired()">
+                <b>This installation has already been migrated.</b>
+                To run the migration again, undo the previous one first.
+            </div>
+
+            <p>
+                Data of a previous <b>PrintJobHistory</b> install was found in
+                <code data-bind="text: status().dataFolder"></code>.
+                The files are <b>copied</b>, never moved &mdash; the other plugin keeps working with its own data.
+            </p>
+
+            <!-- Preview of what the old database holds -->
+            <div class="alert alert-info" data-bind="visible: preview().readable">
+                <b><span data-bind="text: preview().jobCount"></span> print jobs</b>
+                <span data-bind="visible: preview().schemeVersion">
+                    (database scheme <span data-bind="text: preview().schemeVersion"></span>)
+                </span>
+                <div data-bind="visible: preview().firstJobDate">
+                    <small>
+                        from <span data-bind="text: preview().firstJobDate"></span>
+                        to <span data-bind="text: preview().lastJobDate"></span>
+                    </small>
+                </div>
+                <ul style="margin-top:8px" data-bind="foreach: preview().jobs">
+                    <li>
+                        <span data-bind="text: fileName"></span>
+                        <small data-bind="text: printStartDateTime"></small>
+                        <span class="label" data-bind="text: printStatusResult"></span>
+                    </li>
+                </ul>
+                <small data-bind="visible: preview().moreJobs > 0">
+                    &hellip; and <span data-bind="text: preview().moreJobs"></span> more
+                </small>
+            </div>
+
+            <div class="alert alert-warning" data-bind="visible: status().available && !preview().readable">
+                The previous database could not be read, so no summary can be shown. The copy can still be attempted.
+            </div>
+
+            <h4>What to copy</h4>
+            <table class="table table-condensed">
+                <thead>
+                    <tr><th style="width:20px"></th><th>Name</th><th>Type</th><th style="text-align:right">Size</th></tr>
+                </thead>
+                <tbody data-bind="foreach: files">
+                    <tr>
+                        <td><input type="checkbox" data-bind="checked: selected"></td>
+                        <td><span data-bind="text: name"></span></td>
+                        <td><small data-bind="text: kind"></small></td>
+                        <td style="text-align:right"><small data-bind="text: $parent.formatSize(size)"></small></td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <label class="checkbox">
+                <input type="checkbox" data-bind="checked: includeSettings, enable: status().hasSettings">
+                Also copy the settings of the previous installation
+                <small data-bind="visible: !status().hasSettings">(the previous install has no stored settings)</small>
+            </label>
+
+            <!-- Shown when this install already holds print jobs of its own -->
+            <div class="alert alert-error" data-bind="visible: conflict">
+                <b>This installation already has print jobs.</b>
+                <div data-bind="text: errorMessage"></div>
+                <label class="checkbox" style="margin-top:8px">
+                    <input type="checkbox" data-bind="checked: overwriteExisting">
+                    Replace them with the data from the previous install
+                    (the replaced files are kept as <code>.pre-migration-&hellip;</code> and can be undone)
+                </label>
+            </div>
+
+            <div class="alert alert-error" data-bind="visible: errorMessage() && !conflict()">
+                <span data-bind="text: errorMessage"></span>
+            </div>
+
+            <div class="alert alert-success" data-bind="visible: resultMessage">
+                <span data-bind="text: resultMessage"></span>
+            </div>
+
+        </div>
+    </div>
+
+    <div class="modal-footer">
+        <span class="pull-left" data-bind="visible: status().databaseUndoAvailable() || status().settingsUndoAvailable()">
+            <button class="btn btn-warning"
+                    data-bind="visible: status().databaseUndoAvailable, click: function(){ $data.undo('database'); }">
+                Undo data migration
+            </button>
+            <button class="btn btn-warning"
+                    data-bind="visible: status().settingsUndoAvailable, click: function(){ $data.undo('settings'); }">
+                Undo settings migration
+            </button>
+        </span>
+        <button class="btn" data-dismiss="modal" aria-hidden="true">Close</button>
+        <button class="btn btn-primary"
+                data-bind="visible: status().available,
+                           enable: !inProgress() && !status().done(),
+                           attr: {title: status().done() ? 'Already migrated - undo the previous migration first' : ''},
+                           click: migrate">
+            <i class="icon-spinner icon-spin" data-bind="visible: inProgress"></i>
+            <span data-bind="text: status().done() ? 'Already migrated' : 'Migrate'"></span>
+        </button>
+    </div>
+</div>
