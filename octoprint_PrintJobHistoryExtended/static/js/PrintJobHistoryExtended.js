@@ -376,6 +376,7 @@ $(function() {
         self.statisticDialog = new StatisticDialog();
         self.compareSlicerSettingsDialog = new CompareSlicerSettingsDialog();
         self.messageConfirmDialog = new PrintJobHistoryExtendedPluginMessageConfirmDialog();
+        self.legacyMigration = new PrintJobHistoryExtendedLegacyMigration();
 
         self.printJobForEditing = ko.observable();
         self.printJobForEditing(new PrintJobItem(printHistoryJobItems[0]));
@@ -690,6 +691,8 @@ $(function() {
             self.csvImportDialog.init(self.apiClient);
             self.statisticDialog.init(self.apiClient);
             self.compareSlicerSettingsDialog.init(self.apiClient, self.busyIndicatorActive);
+            self.legacyMigration.init(PLUGIN_ID);
+            self.legacyMigration.loadStatus();
 
             // load browser stored settings
             loadSettingsFromBrowserStore();

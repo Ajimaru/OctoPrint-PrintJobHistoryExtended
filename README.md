@@ -7,11 +7,6 @@
 The OctoPrint-Plugin stores all print-job information of a print in a local database.
 This information is collected from OctoPrint itself, but also from other plugins. See [below](#Optional-Plugins) for more information about these plugins.
 
-#### *NOTE: this plugin was once again abandoned ! Hopefully I will keep support longer*
-
-If you would like to support these new efforts, please consider buying me a coffee or two. Thank you!
-
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/D1D21B0LA9)
 ## Included features
 
 - [x] Print result (success, fail, cancel)
@@ -31,6 +26,7 @@ If you would like to support these new efforts, please consider buying me a coff
 - [x] Export all data from PrintHistory-Plugin as CSV
 
 ### UI features
+
 - [x] List all printjobs
 - [x] Edit single printjob
 - [x] Add single printjob
@@ -45,6 +41,7 @@ If you would like to support these new efforts, please consider buying me a coff
 - [x] Compare Slicer-Settings
 
 ### Not included
+
 - No report diagramms
 
 ## Optional Plugins
@@ -79,23 +76,28 @@ or manually using this URL:
 
     https://github.com/Ajimaru/OctoPrint-PrintJobHistoryExtended/releases/latest/download/main.zip
 
-After installation, you can listen on three release channels (since 1.6.0).
-What does this mean: Each channel has its own release-version and each release has a different kind of functionality and stability.
+## Migrating from PrintJobHistory
 
-- **"Only Release"**: Only stable and tested versions will be shown in the software-update section of OctoPrint
-- **"Release & Candidate"**: Beside the stable release, you can also see the "release-candidates", like '''1.7.0rc3'''.
-  The rc's includde new functionalty/bugfixes and are already tested by the community.. so by YOU ;-)
-- **"Release & Candidate & in Development"**: Beside stable and rc, you will be informed about development versions.
-  A development version like '''1.8.0.dev5``` could include a new (experimental) feature/bugfixs, but it is not fully tested by the community
+This plugin uses its own identifier, so it can be installed **alongside** the original
+[PrintJobHistory](https://github.com/vojtakaniok/OctoPrint-PrintJobHistory) plugin. Both
+keep separate databases, snapshots and settings.
 
-Changing between each release is done via the "Software Update section" in the settings.
-![release-channels](screenshots/release-channels.png "Release channels")
+To adopt the data of an existing PrintJobHistory install, open
+**Settings → Print Job History Extended**. While there is something to migrate, a banner
+offers a migration dialog; afterwards it stays reachable under the **Storage** tab.
 
-**!!! If you use the development-channel, you can use the latest feature and can improve the quality of the plugin !!!**
+The dialog shows what the old database holds and lets you pick what to copy — the database
+and snapshots are preselected, backups are not. Settings can be copied along, except those
+pointing at the old plugin's data folder.
 
-Hint: "Easy-switching" is possible with OctoPrint-Version 1.8.0 (see https://github.com/OctoPrint/OctoPrint/issues/4238).
-At the meantime you need to uninstall and install the version you like from the selected channel...or stay in one channel ;-)
+Good to know:
 
+- Files are **copied, never moved** — the original plugin keeps working with its own data.
+- If this install already has print jobs, the migration stops and asks before replacing
+  anything. Replaced files are kept as `<name>.pre-migration-<timestamp>`.
+- Each migration can be **undone** (data and settings separately) from the same dialog.
+- The plugin holds its database open while running, so a migration ends with a prompt to
+  **restart OctoPrint** — the copied print jobs only appear afterwards.
 
 ## Roadmap
 
@@ -104,5 +106,3 @@ TBD. Critical bug fixes for starters. Submit issues to the repo [here](https://g
 ## Versions
 
 see [Release-Overview](https://github.com/Ajimaru/OctoPrint-PrintJobHistoryExtended/releases/)
-
-
