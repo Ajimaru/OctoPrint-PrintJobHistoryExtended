@@ -1,4 +1,4 @@
 include README.md
-recursive-include octoprint_PrintJobHistory/templates *
-recursive-include octoprint_PrintJobHistory/translations *
-recursive-include octoprint_PrintJobHistory/static *
+recursive-include octoprint_PrintJobHistoryExtended/templates *
+recursive-include octoprint_PrintJobHistoryExtended/translations *
+recursive-include octoprint_PrintJobHistoryExtended/static *
