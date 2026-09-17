@@ -140,6 +140,69 @@ function PrintJobHistoryExtendedAPIClient(pluginId, baseUrl) {
         });
     }
 
+    this.callTestDatabaseConnection = function(databaseSettings, responseHandler, errorHandler){
+        $.ajax({
+            url: this.baseUrl + "plugin/"+this.pluginId+"/testDatabaseConnection",
+            type: "PUT",
+            dataType: "json",
+            data: ko.toJSON(databaseSettings),
+            contentType: "application/json; charset=UTF-8"
+        }).done(function( data ){
+            responseHandler(data)
+        }).fail(function(jqXHR){
+            if (errorHandler){
+                errorHandler(jqXHR)
+            }
+        });
+    }
+
+    this.callLoadDatabaseMetaData = function(responseHandler){
+        $.ajax({
+            url: this.baseUrl + "plugin/"+this.pluginId+"/loadDatabaseMetaData",
+            type: "GET"
+        }).done(function( data ){
+            responseHandler(data)
+        });
+    }
+
+    this.callCopyDatabase = function(databaseSettings, responseHandler, errorHandler){
+        $.ajax({
+            url: this.baseUrl + "plugin/"+this.pluginId+"/copyDatabase",
+            type: "POST",
+            dataType: "json",
+            data: ko.toJSON(databaseSettings),
+            contentType: "application/json; charset=UTF-8"
+        }).done(function( data ){
+            responseHandler(data)
+        }).fail(function(jqXHR){
+            if (errorHandler){
+                errorHandler(jqXHR)
+            }
+        });
+    }
+
+    this.callUpgradeDatabaseScheme = function(responseHandler, errorHandler){
+        $.ajax({
+            url: this.baseUrl + "plugin/"+this.pluginId+"/upgradeDatabaseScheme",
+            type: "PUT"
+        }).done(function( data ){
+            responseHandler(data)
+        }).fail(function(jqXHR){
+            if (errorHandler){
+                errorHandler(jqXHR)
+            }
+        });
+    }
+
+    this.callLoadKnownInstances = function(responseHandler){
+        $.ajax({
+            url: this.baseUrl + "plugin/"+this.pluginId+"/loadKnownInstances",
+            type: "GET"
+        }).done(function( data ){
+            responseHandler(data)
+        });
+    }
+
     // remove PrintJob-Item
     this.callStorePrintJob = function (databaseId, printJobItem, responseHandler){
         jsonPayload = ko.toJSON(printJobItem)

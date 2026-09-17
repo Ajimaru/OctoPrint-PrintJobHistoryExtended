@@ -401,6 +401,18 @@ $(function() {
         self.databaseFileLocation = ko.observable();
         self.snapshotFileLocation = ko.observable();
 
+        // database backend / external database
+        self.databaseConnectionTestResult = ko.observable("");
+        self.databaseConnectionTestSuccess = ko.observable(true);
+        self.databaseBusy = ko.observable(false);
+        self.databaseSchemeVersionFromPlugin = ko.observable("-");
+        self.databaseLocalSchemeVersion = ko.observable("-");
+        self.databaseLocalJobCount = ko.observable("-");
+        self.databaseExternalSchemeVersion = ko.observable("-");
+        self.databaseExternalJobCount = ko.observable("-");
+        self.databaseSchemeUpgradeNeeded = ko.observable(false);
+        self.knownInstanceNames = ko.observableArray([]);
+
         self.isCostEstimationPluginAvailableText = ko.observable("unknown");
         self.currencySymbol = ko.observable();
         self.currencyFormat = ko.observable();
@@ -494,12 +506,147 @@ $(function() {
         }
 
         self.deleteDatabaseAction = function() {
-            var result = confirm("Do you really want to delete all PrintJobHistory data?");
+            var confirmMessage = "Do you really want to delete all PrintJobHistory data?";
+            if (self.pluginSettings.useExternal() == true){
+                // A shared external database holds the history of every connected instance.
+                confirmMessage = "WARNING: an external database is in use.\n\n"
+                    + "This deletes the print jobs of ALL OctoPrint instances connected to '"
+                    + self.pluginSettings.databaseName() + "', not just this one.\n\n"
+                    + "Do you really want to continue?";
+            }
+            var result = confirm(confirmMessage);
             if (result == true){
                 self.apiClient.callDeleteDatabase(function(responseData) {
                     self.printJobHistoryExtendedTableHelper.reloadItems();
+                    self.loadDatabaseMetaData();
                 });
             }
+        };
+
+        // Collect the database settings from the dialog, so they can be tested before saving.
+        self.buildDatabaseSettings = function() {
+            return {
+                "useExternal": self.pluginSettings.useExternal(),
+                "databaseType": self.pluginSettings.databaseType(),
+                "databaseHost": self.pluginSettings.databaseHost(),
+                "databasePort": self.pluginSettings.databasePort(),
+                "databaseName": self.pluginSettings.databaseName(),
+                "databaseUser": self.pluginSettings.databaseUser(),
+                "databasePassword": self.pluginSettings.databasePassword()
+            };
+        };
+
+        self.handleDatabaseMetaDataResponse = function(metaData) {
+            self.databaseBusy(false);
+            if (metaData == null){
+                return;
+            }
+            self.databaseSchemeVersionFromPlugin(metaData.schemeVersionFromPlugin);
+            self.databaseLocalSchemeVersion(metaData.localSchemeVersion == null ? "-" : metaData.localSchemeVersion);
+            self.databaseLocalJobCount(metaData.localJobCount == null ? "-" : metaData.localJobCount);
+            self.databaseExternalSchemeVersion(metaData.externalSchemeVersion == null ? "-" : metaData.externalSchemeVersion);
+            self.databaseExternalJobCount(metaData.externalJobCount == null ? "-" : metaData.externalJobCount);
+            self.databaseSchemeUpgradeNeeded(metaData.schemeUpgradeNeeded == true);
+
+            self.databaseConnectionTestSuccess(metaData.success == true);
+            if (metaData.success == true){
+                self.databaseConnectionTestResult("Connection successful.");
+            } else {
+                self.databaseConnectionTestResult("Connection failed: " + metaData.errorMessage);
+            }
+        };
+
+        self.loadDatabaseMetaData = function() {
+            self.apiClient.callLoadDatabaseMetaData(function(responseData) {
+                self.handleDatabaseMetaDataResponse(responseData.metadata);
+            });
+        };
+
+        self.testDatabaseConnection = function() {
+            self.databaseBusy(true);
+            self.databaseConnectionTestResult("Testing connection...");
+            self.apiClient.callTestDatabaseConnection(
+                self.buildDatabaseSettings(),
+                function(responseData) {
+                    self.handleDatabaseMetaDataResponse(responseData.metadata);
+                },
+                function(jqXHR) {
+                    self.databaseBusy(false);
+                    self.databaseConnectionTestSuccess(false);
+                    self.databaseConnectionTestResult("Connection test failed. See OctoPrint.log for details.");
+                }
+            );
+        };
+
+        self.copyDatabaseAction = function() {
+            $("#dialog_printJobHistoryExtended_copyDatabase").modal("show");
+        };
+
+        self.cancelCopyDatabaseAction = function() {
+            $("#dialog_printJobHistoryExtended_copyDatabase").modal("hide");
+        };
+
+        self.confirmCopyDatabaseAction = function() {
+            self.databaseBusy(true);
+            self.databaseConnectionTestResult("Copying data...");
+            self.apiClient.callCopyDatabase(
+                self.buildDatabaseSettings(),
+                function(responseData) {
+                    self.databaseBusy(false);
+                    $("#dialog_printJobHistoryExtended_copyDatabase").modal("hide");
+                    var metaData = responseData.metadata;
+                    if (metaData.success == true){
+                        self.databaseConnectionTestSuccess(true);
+                        var message = "Copied " + metaData.copiedJobCount + " print job(s).";
+                        if (metaData.totalJobCountAfterCopy != null){
+                            message = message + " The external database now holds "
+                                + metaData.totalJobCountAfterCopy + " print job(s) in total.";
+                        }
+                        self.databaseConnectionTestResult(message);
+                        self.loadDatabaseMetaData();
+                        self.loadKnownInstances();
+                    } else {
+                        self.databaseConnectionTestSuccess(false);
+                        self.databaseConnectionTestResult("Copy failed: " + metaData.errorMessage);
+                    }
+                },
+                function(jqXHR) {
+                    self.databaseBusy(false);
+                    $("#dialog_printJobHistoryExtended_copyDatabase").modal("hide");
+                    self.databaseConnectionTestSuccess(false);
+                    self.databaseConnectionTestResult("Copy failed. See OctoPrint.log for details.");
+                }
+            );
+        };
+
+        self.upgradeDatabaseSchemeAction = function() {
+            self.databaseBusy(true);
+            self.apiClient.callUpgradeDatabaseScheme(
+                function(responseData) {
+                    self.databaseBusy(false);
+                    var metaData = responseData.metadata;
+                    if (metaData.success == true){
+                        self.databaseConnectionTestSuccess(true);
+                        self.databaseConnectionTestResult("Database scheme upgraded to version " + metaData.schemeVersion + ".");
+                        self.databaseSchemeUpgradeNeeded(false);
+                        self.loadDatabaseMetaData();
+                    } else {
+                        self.databaseConnectionTestSuccess(false);
+                        self.databaseConnectionTestResult("Upgrade failed: " + metaData.errorMessage);
+                    }
+                },
+                function(jqXHR) {
+                    self.databaseBusy(false);
+                    self.databaseConnectionTestSuccess(false);
+                    self.databaseConnectionTestResult("Upgrade failed. See OctoPrint.log for details.");
+                }
+            );
+        };
+
+        self.loadKnownInstances = function() {
+            self.apiClient.callLoadKnownInstances(function(responseData) {
+                self.knownInstanceNames(responseData.instanceNames);
+            });
         };
 
         self.csvImportUploadButton = $("#settings-pjhe-importcsv-upload");
@@ -717,6 +864,9 @@ $(function() {
             // debugger
             // all inits were done
             self.downloadDatabaseUrl(self.apiClient.getDownloadDatabaseUrl());
+
+            self.loadDatabaseMetaData();
+            self.loadKnownInstances();
 
             // to bring up dialogs the binding must be already done
             if (self.printJobToShowAfterStartup != null){

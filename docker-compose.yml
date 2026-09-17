@@ -1,17 +1,18 @@
-version: '3'
+# Local MySQL server for developing/testing the external-database support.
+#   docker compose up -d mysql
 services:
-  postgres:
-    image: "postgres" # use latest official postgres version
+  mysql:
+    image: "mysql:8"
     environment:
-      - POSTGRES_DB:printjobhistoryextended_database
-      - POSTGRES_USER:Olli
-      - POSTGRES_PASSWORD:illO
-#    env_file:
-#      - database.env # configure postgres
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: printjobhistoryextended
+      MYSQL_USER: printjobhistory
+      MYSQL_PASSWORD: printjobhistory
+    # utf8mb4 so emoji in file names and notes survive; MySQL's "utf8" is only 3 bytes.
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
     volumes:
-      - database-data:/var/lib/postgresql/data/ # persist data even if container shuts down
+      - database-data:/var/lib/mysql
     ports:
-      - 5432:5432
+      - 3306:3306
 volumes:
-  database-data: # named volumes can be managed easier using docker-compose
-
+  database-data:

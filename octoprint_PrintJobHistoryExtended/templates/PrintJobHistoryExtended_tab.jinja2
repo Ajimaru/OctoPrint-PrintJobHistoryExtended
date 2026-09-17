@@ -67,6 +67,16 @@
                     <a href="#" data-bind="click: function() { printJobHistoryExtendedTableHelper.changeFilter('onlyFailed'); }"><i class="icon-ok" data-bind="style: {visibility: printJobHistoryExtendedTableHelper.isFilterSelected('onlyFailed') ? 'visible' : 'hidden'}"></i> only failed</a>
                 </small>
             </div>
+            <!-- instance filter: only shown when the database holds jobs of more than one OctoPrint instance -->
+            <div class="pull-right" style="clear: both;" data-bind="visible: knownInstanceNames().length > 1">
+                <small>
+                    Instance:
+                    <a href="#" data-bind="click: function() { printJobHistoryExtendedTableHelper.changeInstanceFilter('all'); }"><i class="icon-ok" data-bind="style: {visibility: printJobHistoryExtendedTableHelper.isInstanceFilterSelected('all') ? 'visible' : 'hidden'}"></i> all</a>
+                    <!-- ko foreach: knownInstanceNames -->
+                    | <a href="#" data-bind="click: function() { $parent.printJobHistoryExtendedTableHelper.changeInstanceFilter($data); }"><i class="icon-ok" data-bind="style: {visibility: $parent.printJobHistoryExtendedTableHelper.isInstanceFilterSelected($data) ? 'visible' : 'hidden'}"></i> <span data-bind="text: $data"></span></a>
+                    <!-- /ko -->
+                </small>
+            </div>
             <div  >
                 <div >
 

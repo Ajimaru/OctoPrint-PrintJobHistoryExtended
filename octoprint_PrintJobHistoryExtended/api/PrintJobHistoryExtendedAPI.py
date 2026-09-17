@@ -485,6 +485,13 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
     #######################################################################################   DOWNLOAD DATABASE-FILE
     @octoprint.plugin.BlueprintPlugin.route("/downloadDatabase", methods=["GET"])
     def get_download_database(self):
+        # There is no local database file to hand out when an external database is in use.
+        if (self._databaseManager.isExternalDatabase() == True):
+            return flask.make_response(flask.jsonify({
+                "error": "An external database is in use. Back it up with the database "
+                         "server's own tools (e.g. mysqldump)."
+            }), 409)
+
         return send_file(self._databaseManager.getDatabaseFileLocation(),
                          mimetype='application/octet-stream',
                          download_name='printJobHistoryExtended.db',
@@ -501,6 +508,91 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
             "result": "success"
         })
 
+
+    #######################################################################################   TEST DATABASE CONNECTION
+    @octoprint.plugin.BlueprintPlugin.route("/testDatabaseConnection", methods=["PUT"])
+    def put_test_database_connection(self):
+        jsonData = request.json
+        databaseSettings = self._buildDatabaseSettingsFromJson(jsonData)
+
+        errorMessage = self._databaseManager.testDatabaseConnection(databaseSettings)
+        if (errorMessage != None):
+            return flask.jsonify({
+                "metadata": {
+                    "success": False,
+                    "errorMessage": errorMessage
+                }
+            })
+
+        # The connection works, so report the scheme version and job count in the same round trip.
+        metaData = self._databaseManager.loadDatabaseMetaInformations(databaseSettings)
+        return flask.jsonify({
+            "metadata": metaData
+        })
+
+
+    #######################################################################################   LOAD DATABASE METADATA
+    @octoprint.plugin.BlueprintPlugin.route("/loadDatabaseMetaData", methods=["GET"])
+    def get_database_metadata(self):
+        return flask.jsonify({
+            "metadata": self._databaseManager.loadDatabaseMetaInformations(None)
+        })
+
+
+    #######################################################################################   COPY DATABASE
+    @octoprint.plugin.BlueprintPlugin.route("/copyDatabase", methods=["POST"])
+    def post_copy_database(self):
+        jsonData = request.json
+        databaseSettings = self._buildDatabaseSettingsFromJson(jsonData)
+
+        result = self._databaseManager.copyPrintJobDataToExternalDatabase(databaseSettings)
+        return flask.jsonify({
+            "metadata": result
+        })
+
+
+    #######################################################################################   UPGRADE DATABASE SCHEME
+    @octoprint.plugin.BlueprintPlugin.route("/upgradeDatabaseScheme", methods=["PUT"])
+    def put_upgrade_database_scheme(self):
+        return flask.jsonify({
+            "metadata": self._databaseManager.upgradeDatabaseScheme()
+        })
+
+
+    #######################################################################################   KNOWN INSTANCES
+    @octoprint.plugin.BlueprintPlugin.route("/loadKnownInstances", methods=["GET"])
+    def get_known_instances(self):
+        return flask.jsonify({
+            "instanceNames": self._databaseManager.loadKnownInstanceNames(),
+            "currentInstanceName": self._databaseManager.getInstanceName()
+        })
+
+
+    def _buildDatabaseSettingsFromJson(self, jsonData):
+        """Map the JSON sent by the settings dialog onto a DatabaseSettings carrier."""
+        from octoprint_PrintJobHistoryExtended.DatabaseManager import DatabaseManager
+
+        databaseSettings = DatabaseManager.DatabaseSettings()
+        databaseSettings.useExternal = self._getValueFromJSONOrNone(
+            SettingsKeys.SETTINGS_KEY_DATABASE_USE_EXTERNAL, jsonData) == True
+        databaseSettings.type = self._getValueFromJSONOrNone(
+            SettingsKeys.SETTINGS_KEY_DATABASE_TYPE, jsonData)
+        databaseSettings.host = self._getValueFromJSONOrNone(
+            SettingsKeys.SETTINGS_KEY_DATABASE_HOST, jsonData)
+        databaseSettings.name = self._getValueFromJSONOrNone(
+            SettingsKeys.SETTINGS_KEY_DATABASE_NAME, jsonData)
+        databaseSettings.user = self._getValueFromJSONOrNone(
+            SettingsKeys.SETTINGS_KEY_DATABASE_USER, jsonData)
+        databaseSettings.password = self._getValueFromJSONOrNone(
+            SettingsKeys.SETTINGS_KEY_DATABASE_PASSWORD, jsonData)
+
+        port = self._getValueFromJSONOrNone(SettingsKeys.SETTINGS_KEY_DATABASE_PORT, jsonData)
+        portAsInt = StringUtils.transformToIntOrNone(port)
+        databaseSettings.port = portAsInt if portAsInt != None else 3306
+
+        databaseSettings.fileLocation = self._databaseManager.getDatabaseFileLocation()
+        return databaseSettings
+
     #######################################################################################   EXPORT DATABASE as CSV
     @octoprint.plugin.BlueprintPlugin.route("/exportPrintJobHistory/<string:exportType>", methods=["GET"])
     def get_exportPrintJobHistoryData(self, exportType):
@@ -509,6 +601,18 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
             if "databaseIds" in flask.request.values:
                 selectedDatabaseIds = flask.request.values["databaseIds"]
                 allJobsModels = self._databaseManager.loadSelectedPrintJobs(selectedDatabaseIds)
+            elif "instanceName" in flask.request.values:
+                # Export what the table currently shows, so the instance filter is respected
+                # instead of silently exporting every instance's jobs.
+                tableQuery = {
+                    "sortColumn": flask.request.values.get("sortColumn", "printStartDateTime"),
+                    "sortOrder": flask.request.values.get("sortOrder", "desc"),
+                    "filterName": flask.request.values.get("filterName", "all"),
+                    "instanceName": flask.request.values.get("instanceName", "all"),
+                    "from": 0,
+                    "to": 999999
+                }
+                allJobsModels = self._databaseManager.loadPrintJobsByQuery(tableQuery)
             else:
                 allJobsModels = self._databaseManager.loadAllPrintJobs()
 
@@ -582,13 +686,16 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
 
                 importModeText = "fully replaced"
 
-            # - insert all printjobs in database
+            # - insert all printjobs in database.
+            #   One transaction for the whole import: a transaction per row means a network
+            #   round trip per row, which is unusable against an external database.
             currentPrintJobNumber = 0
-            for printJob in resultOfPrintJobs:
-                currentPrintJobNumber = currentPrintJobNumber + 1
-                updateParsingStatus(currentPrintJobNumber)
-                databaseManager.insertPrintJob(printJob)
-                # print(printJob)
+            with databaseManager.getDatabase().atomic():
+                for printJob in resultOfPrintJobs:
+                    currentPrintJobNumber = currentPrintJobNumber + 1
+                    updateParsingStatus(currentPrintJobNumber)
+                    databaseManager.insertPrintJob(printJob)
+                    # print(printJob)
             pass
         else:
             errorCollection.append("Nothing to import!")
@@ -598,6 +705,10 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
             successMessage = "All data is successful " + importModeText + " with '" + str(len(resultOfPrintJobs)) + "' print jobs."
         else:
             successMessage = "Some error(s) occurs! Maybe you need to manually rollback the database!"
+
+        if (backupDatabaseFilePath == None):
+            # No file backup exists when an external database is in use.
+            backupDatabaseFilePath = ""
 
         sendCSVUploadStatusToClient("finished","", backupDatabaseFilePath, backupSnapshotFilePath, successMessage, errorCollection)
         pass

@@ -70,6 +70,24 @@ class SettingsKeys():
 	SETTINGS_KEY_DATABASE_PATH = "databaseFileLocation"
 	SETTINGS_KEY_SNAPSHOT_PATH = "snapshotFileLocation"
 
+	## Database backend.
+	# These are deliberately flat keys instead of a nested dict: OctoPrint only returns the
+	# changed sub-keys of a nested settings dict on a partial save, which silently drops the
+	# rest of the values.
+	SETTINGS_KEY_DATABASE_USE_EXTERNAL = "useExternal"
+	SETTINGS_KEY_DATABASE_TYPE = "databaseType"
+	SETTINGS_KEY_DATABASE_HOST = "databaseHost"
+	SETTINGS_KEY_DATABASE_PORT = "databasePort"
+	SETTINGS_KEY_DATABASE_NAME = "databaseName"
+	SETTINGS_KEY_DATABASE_USER = "databaseUser"
+	SETTINGS_KEY_DATABASE_PASSWORD = "databasePassword"
+
+	KEY_DATABASE_TYPE_SQLITE = "sqlite"
+	KEY_DATABASE_TYPE_MYSQL = "mysql"
+
+	## Identifies this OctoPrint instance when several of them share one external database
+	SETTINGS_KEY_INSTANCE_NAME = "instanceName"
+
 	## Debugging
 	SETTINGS_KEY_SQL_LOGGING_ENABLED = "sqlLoggingEnabled"
 
