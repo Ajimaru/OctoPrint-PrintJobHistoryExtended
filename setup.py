@@ -14,14 +14,14 @@ plugin_package = "octoprint_PrintJobHistoryExtended"
 plugin_name = "Print Job History Extended"
 
 # The plugin's version. Can be overwritten within OctoPrint's internal data via __plugin_version__ in the plugin module
-plugin_version = "1.18.0.dev8"
+plugin_version = "1.18.0.dev9"
 
 # The plugin's description. Can be overwritten within OctoPrint's internal data via __plugin_description__ in the plugin
 # module
 plugin_description = """Collects all print jobs and stores the job data into a database"""
 
 # The plugin's author. Can be overwritten within OctoPrint's internal data via __plugin_author__ in the plugin module
-plugin_author = "Ajimaru"
+plugin_author = "Ajimaru, based on work of OllisGit and others"
 
 # The plugin's author's mail address.
 plugin_author_email = "ajimaru_gdr@pm.me"
@@ -35,7 +35,10 @@ plugin_license = "AGPLv3"
 # Any additional requirements besides OctoPrint should be listed here
 # since 7.0.0 no Python 2.7 Support, see https://github.com/python-pillow/Pillow/blob/master/CHANGES.rst
 #  >=6.2.0<7.0.0
+# OctoPrint 1.x is not supported. The current OctoPrint 2.0 releases are release
+# candidates, which pip only considers when the requirement explicitly admits one.
 plugin_requires = [
+	"OctoPrint>=2.0.0rc1",
 	"pillow",
 	"peewee"
 ]
@@ -64,7 +67,7 @@ plugin_ignored_packages = []
 # Example:
 #     plugin_requires = ["someDependency==dev"]
 #     additional_setup_parameters = {"dependency_links": ["https://github.com/someUser/someRepo/archive/master.zip#egg=someDependency-dev"]}
-additional_setup_parameters = {}
+additional_setup_parameters = {"python_requires": ">=3.11,<3.15"}
 
 ########################################################################################################################
 

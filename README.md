@@ -3,9 +3,28 @@
 [![Version](https://img.shields.io/badge/dynamic/json.svg?color=brightgreen&label=version&url=https://api.github.com/repos/Ajimaru/OctoPrint-PrintJobHistoryExtended/releases&query=$[0].name)]()
 [![Released](https://img.shields.io/badge/dynamic/json.svg?color=brightgreen&label=released&url=https://api.github.com/repos/Ajimaru/OctoPrint-PrintJobHistoryExtended/releases&query=$[0].published_at)]()
 ![GitHub Releases (by Release)](https://img.shields.io/github/downloads/Ajimaru/OctoPrint-PrintJobHistoryExtended/latest/total.svg)
+[![Python][badge-python]](https://python.org)
+[![OctoPrint][badge-octoprint]](https://octoprint.org)
+
+[badge-python]: https://img.shields.io/badge/python-3.11%2B-blue.svg?style=flat-square
+[badge-octoprint]: https://img.shields.io/badge/OctoPrint-2.0.0%2B-blue.svg?style=flat-square
 
 The OctoPrint-Plugin stores all print-job information of a print in a local database.
 This information is collected from OctoPrint itself, but also from other plugins. See [below](#Optional-Plugins) for more information about these plugins.
+
+## Origin
+
+This plugin is a fork descending from:
+
+- [vojtakaniok/OctoPrint-PrintJobHistory](https://github.com/vojtakaniok/OctoPrint-PrintJobHistory) — original project
+
+This fork is maintained by [Ajimaru](https://github.com/Ajimaru).
+
+## Requirements
+
+- **OctoPrint 2.0.0 or newer** — at the time of writing only available as a release
+  candidate. The OctoPrint 1.x branch is **not supported**.
+- **Python 3.11 or newer** (up to 3.14).
 
 ## Included features
 
