@@ -80,22 +80,18 @@ class PrintJobHistoryExtendedPlugin(
 ):
 
 	def initialize(self):
-		self._preHeatPluginImplementation = None
-		self._preHeatPluginImplementationState = None
-		self._filamentManagerPluginImplementation = None
-		self._filamentManagerPluginImplementationState = None
 		self._displayLayerProgressPluginImplementation = None
 		self._displayLayerProgressPluginImplementationState = None
 		self._spoolManagerPluginImplementation = None
 		self._spoolManagerPluginImplementationState = None
-		self._spoolmanPluginImplementation = None
-		self._spoolmanPluginImplementationState = None
 		self._ultimakerFormatPluginImplementation = None
 		self._ultimakerFormatPluginImplementationState = None
 		self._prusaSlicerThumbnailsPluginImplementation = None
 		self._prusaSlicerThumbnailsPluginImplementationState = None
 		self._costEstimationPluginImplementation = None
 		self._costEstimationPluginImplementationState = None
+		self._tasmotaPluginImplementation = None
+		self._tasmotaPluginImplementationState = None
 		self._printHistoryPluginImplementation = None
 
 		pluginDataBaseFolder = self.get_plugin_data_folder()
@@ -188,68 +184,48 @@ class PrintJobHistoryExtendedPlugin(
 									confirmMessageData=confirmMessageData))
 
 	def _checkAndLoadThirdPartyPluginInfos(self, sendToClient=False):
-		pluginInfo = self._getPluginInformation(SettingsKeys.PLUGIN_PREHEAT)
-		self._preHeatPluginImplementationState = pluginInfo[0]
-		self._preHeatPluginImplementation = pluginInfo[1]
-		preHeatCurrentVersion = pluginInfo[2]
-		preHeatRequiredVersion = pluginInfo[3]
-
-		pluginInfo = self._getPluginInformation(SettingsKeys.PLUGIN_FILAMENT_MANAGER)
-		self._filamentManagerPluginImplementationState = pluginInfo[0]
-		self._filamentManagerPluginImplementation = pluginInfo[1]
-		filamentManagerCurrentVersion = pluginInfo[2]
-		filamentManagerRequiredVersion = pluginInfo[3]
-
-		pluginInfo = self._getPluginInformation(SettingsKeys.PLUGIN_DISPLAY_LAYER_PROGRESS)
-		self._displayLayerProgressPluginImplementationState = pluginInfo[0]
-		self._displayLayerProgressPluginImplementation = pluginInfo[1]
-		displayLayerCurrentVersion = pluginInfo[2]
-		displayLayerRequiredVersion = pluginInfo[3]
-
 		pluginInfo = self._getPluginInformation(SettingsKeys.PLUGIN_SPOOL_MANAGER)
 		self._spoolManagerPluginImplementationState = pluginInfo[0]
 		self._spoolManagerPluginImplementation = pluginInfo[1]
 		spoolManagerCurrentVersion = pluginInfo[2]
 		spoolManagerRequiredVersion = pluginInfo[3]
 
-		pluginInfo = self._getPluginInformation(SettingsKeys.PLUGIN_SPOOLMAN)
-		self._spoolmanPluginImplementationState = pluginInfo[0]
-		self._spoolmanPluginImplementation = pluginInfo[1]
-		spoolmanCurrentVersion = pluginInfo[2]
-		spoolmanRequiredVersion = pluginInfo[3]
+		pluginInfo = self._getPluginInformation(SettingsKeys.PLUGIN_TASMOTA)
+		self._tasmotaPluginImplementationState = pluginInfo[0]
+		self._tasmotaPluginImplementation = pluginInfo[1]
+		tasmotaCurrentVersion = pluginInfo[2]
+
+		# Optional extras. Resolved so the log shows them, but never nagged about.
+		pluginInfo = self._getPluginInformation(SettingsKeys.PLUGIN_DISPLAY_LAYER_PROGRESS)
+		self._displayLayerProgressPluginImplementationState = pluginInfo[0]
+		self._displayLayerProgressPluginImplementation = pluginInfo[1]
+		displayLayerCurrentVersion = pluginInfo[2]
 
 		pluginInfo = self._getPluginInformation(SettingsKeys.PLUGIN_ULTIMAKER_FORMAT_PACKAGE)
 		self._ultimakerFormatPluginImplementationState = pluginInfo[0]
 		self._ultimakerFormatPluginImplementation = pluginInfo[1]
 		ultimakerCurrentVersion = pluginInfo[2]
-		ultimakerRequiredVersion = pluginInfo[3]
 
 		pluginInfo = self._getPluginInformation(SettingsKeys.PLUGIN_PRUSA_SLICER_THUMNAIL)
 		self._prusaSlicerThumbnailsPluginImplementationState = pluginInfo[0]
 		self._prusaSlicerThumbnailsPluginImplementation = pluginInfo[1]
 		pruseSlicerCurrentVersion = pluginInfo[2]
-		pruseSlicerRequiredVersion = pluginInfo[3]
 
 		pluginInfo = self._getPluginInformation(SettingsKeys.PLUGIN_COST_ESTIMATION)
 		self._costEstimationPluginImplementationState = pluginInfo[0]
 		self._costEstimationPluginImplementation = pluginInfo[1]
 		costPluginCurrentVersion = pluginInfo[2]
-		costPluginRequiredVersion = pluginInfo[3]
 
 		pluginInfo = self._getPluginInformation(SettingsKeys.PLUGIN_PRINT_HISTORY)
 		if ("enabled" == pluginInfo[0]):
 			self._printHistoryPluginImplementation = pluginInfo[1]
 		else:
 			self._printHistoryPluginImplementation = None
-		printHistoryCurrentVersion = pluginInfo[2]
-		printHistoryRequiredVersion = pluginInfo[3]
 
 		self._logger.info("Plugin-State:\n"
-						  "| PreHeat=" + self._preHeatPluginImplementationState + " (" + str(preHeatCurrentVersion) + ")\n"
-						  "| filamentmanager=" + self._filamentManagerPluginImplementationState + " (" + str(filamentManagerCurrentVersion) + ")\n"
+						  "| SpoolManagerExtended=" + self._spoolManagerPluginImplementationState + " (" + str(spoolManagerCurrentVersion) + ")\n"
+						  "| tasmota=" + self._tasmotaPluginImplementationState + " (" + str(tasmotaCurrentVersion) + ")\n"
 						  "| DisplayLayerProgress=" + self._displayLayerProgressPluginImplementationState + " (" + str(displayLayerCurrentVersion) + ")\n"
-						  "| SpoolManager=" + self._spoolManagerPluginImplementationState + " (" + str(spoolManagerCurrentVersion) + ")\n"
-                          "| Spoolman=" + self._spoolmanPluginImplementationState + " (" + str(spoolmanCurrentVersion) + ")\n"
 						  "| UltimakerFormat=" + self._ultimakerFormatPluginImplementationState + " (" + str(ultimakerCurrentVersion) + ")\n"
 						  "| PrusaSlicerThumbnail=" + self._prusaSlicerThumbnailsPluginImplementationState + " (" + str(pruseSlicerCurrentVersion) + ")\n"
 						  "| costestimation=" + self._costEstimationPluginImplementationState + " (" + str(costPluginCurrentVersion) + ")\n"
@@ -271,27 +247,11 @@ class PrintJobHistoryExtendedPlugin(
 
 				missingMessage = ""
 
-				if self._preHeatPluginImplementation == None:
-					missingMessage = missingMessage + "<li><a target='_newTab' href='https://plugins.octoprint.org/plugins/preheat/'>PreHeat Button (" + str(preHeatRequiredVersion) + "+)</a> (<b>" + self._preHeatPluginImplementationState + "</b>)</li>"
+				if self._spoolManagerPluginImplementation == None:
+					missingMessage = missingMessage + "<li><a target='_newTab' href='https://github.com/Ajimaru/OctoPrint-SpoolManagerExtended'>SpoolManagerExtended (" + str(spoolManagerRequiredVersion) + "+)</a> (<b>" + self._spoolManagerPluginImplementationState + "</b>)<br/>needed for filament usage, spool assignment and material cost</li>"
 
-				# if at least one filemant tracker is installed, then don't inform the user about the missing other plugin
-				if (self._spoolManagerPluginImplementation == None and self._filamentManagerPluginImplementation == None and self._spoolmanPluginImplementation == None):
-					missingMessage = missingMessage + "<li><a target='_newTab' href='https://plugins.octoprint.org/plugins/SpoolManager/'>SpoolManager (" + str(spoolManagerRequiredVersion) + "+)</a> (<b>" + self._spoolManagerPluginImplementationState + "</b>)<br/><b>or</b></li>"
-					missingMessage = missingMessage + "<li><a target='_newTab' href='https://plugins.octoprint.org/plugins/Spoolman/'>Spoolman (" + str(spoolmanRequiredVersion) + "+)</a> (<b>" + self._spoolmanPluginImplementationState + "</b>)<br/><b>or</b></li>"
-					missingMessage = missingMessage + "<li><a target='_newTab' href='https://plugins.octoprint.org/plugins/filamentmanager/'>FilamentManager (" + str(filamentManagerRequiredVersion) + "+)</a> (<b>" + self._filamentManagerPluginImplementationState + "</b>)</li>"
-
-				if self._displayLayerProgressPluginImplementation == None:
-					missingMessage = missingMessage + "<li><a target='_newTab' href='https://plugins.octoprint.org/plugins/DisplayLayerProgress/'>DisplayLayerProgress (" + str(displayLayerRequiredVersion) + "+)</a> (<b>" + self._displayLayerProgressPluginImplementationState + "</b>)</li>"
-
-				if self._ultimakerFormatPluginImplementation == None:
-					missingMessage = missingMessage + "<li><a target='_newTab' href='https://plugins.octoprint.org/plugins/UltimakerFormatPackage/'>Cura Thumbnails (" + str(ultimakerRequiredVersion) + "+)</a> (<b>" + self._ultimakerFormatPluginImplementationState + "</b>)</li>"
-
-				if self._prusaSlicerThumbnailsPluginImplementation == None:
-					missingMessage = missingMessage + "<li><a target='_newTab' href='https://plugins.octoprint.org/plugins/prusaslicerthumbnails/'>PrusaSlicer Thumbnails (" + str(pruseSlicerRequiredVersion) + "+)</a> (<b>" + self._prusaSlicerThumbnailsPluginImplementationState + "</b>)</li>"
-
-				if self._costEstimationPluginImplementation == None:
-					missingMessage = missingMessage + "<li><a target='_newTab' href='https://plugins.octoprint.org/plugins/costestimation/'>CostEstimation (" + str(costPluginRequiredVersion) +"+)</a> (<b>" + self._costEstimationPluginImplementationState + "</b>)</li>"
-					# missingMessage = missingMessage + "<li><a target='_newTab' href='https://plugins.octoprint.org/plugins/costestimation/'>CostEstimation</a> (<b>Wrong Version, expected: 3.4.0+ current: " + currentVersion + "</b>)</li>"
+				if self._tasmotaPluginImplementation == None:
+					missingMessage = missingMessage + "<li><a target='_newTab' href='https://plugins.octoprint.org/plugins/tasmota/'>Tasmota</a> (<b>" + self._tasmotaPluginImplementationState + "</b>)<br/>needed for measured electricity cost</li>"
 
 				if missingMessage != "":
 					missingMessage = "<ul>" + missingMessage + "</ul>"
@@ -299,62 +259,52 @@ class PrintJobHistoryExtendedPlugin(
 												message=missingMessage))
 
 	def _checkForMissingFilamentTracking(self):
-
+		# Filament tracking used to be a choice between three plugins. It is now simply on
+		# whenever SpoolManagerExtended is present, so the stored value is only ever migrated
+		# forward and then left alone.
 		currentFilamentTrackingPlugin = self._settings.get([SettingsKeys.SETTINGS_KEY_SELECTED_FILAMENTTRACKER_PLUGIN])
-		# check if the current tracking plugin is known
-		if (currentFilamentTrackingPlugin != SettingsKeys.KEY_SELECTED_NONE_PLUGIN and
-			currentFilamentTrackingPlugin != SettingsKeys.KEY_SELECTED_SPOOLMANAGER_PLUGIN and
-			currentFilamentTrackingPlugin != SettingsKeys.KEY_SELECTED_SPOOLMAN_PLUGIN and
-			currentFilamentTrackingPlugin != SettingsKeys.KEY_SELECTED_FILAMENTMANAGER_PLUGIN):
-			# unknown -> set to none
-			self._settings.set([SettingsKeys.SETTINGS_KEY_SELECTED_FILAMENTTRACKER_PLUGIN],
-							   SettingsKeys.KEY_SELECTED_NONE_PLUGIN)
-			self._settings.save()
+		droppedTrackerName = None
 
-		if ( (currentFilamentTrackingPlugin == SettingsKeys.KEY_SELECTED_SPOOLMANAGER_PLUGIN) and
-			 (self._isSpoolManagerInstalledAndEnabled() == False) ):
-			self._settings.set([SettingsKeys.SETTINGS_KEY_SELECTED_FILAMENTTRACKER_PLUGIN],
-							   SettingsKeys.KEY_SELECTED_NONE_PLUGIN)
-			self._settings.save()
+		if (currentFilamentTrackingPlugin == SettingsKeys.LEGACY_KEY_SELECTED_SPOOLMANAGER_PLUGIN):
+			currentFilamentTrackingPlugin = SettingsKeys.KEY_SELECTED_SPOOLMANAGER_PLUGIN
+		elif (currentFilamentTrackingPlugin == SettingsKeys.LEGACY_KEY_SELECTED_SPOOLMAN_PLUGIN):
+			droppedTrackerName = "Spoolman"
+			currentFilamentTrackingPlugin = SettingsKeys.KEY_SELECTED_SPOOLMANAGER_PLUGIN
+		elif (currentFilamentTrackingPlugin == SettingsKeys.LEGACY_KEY_SELECTED_FILAMENTMANAGER_PLUGIN):
+			droppedTrackerName = "FilamentManager"
+			currentFilamentTrackingPlugin = SettingsKeys.KEY_SELECTED_SPOOLMANAGER_PLUGIN
+		elif (currentFilamentTrackingPlugin != SettingsKeys.KEY_SELECTED_SPOOLMANAGER_PLUGIN):
+			currentFilamentTrackingPlugin = SettingsKeys.KEY_SELECTED_NONE_PLUGIN
 
-		if ( (currentFilamentTrackingPlugin == SettingsKeys.KEY_SELECTED_SPOOLMAN_PLUGIN) and
-			(self._isSpoolmanInstalledAndEnabled() == False) ):
-			self._settings.set([SettingsKeys.SETTINGS_KEY_SELECTED_FILAMENTTRACKER_PLUGIN],
-							   SettingsKeys.KEY_SELECTED_NONE_PLUGIN)
-			self._settings.save()
+		if (currentFilamentTrackingPlugin == SettingsKeys.KEY_SELECTED_SPOOLMANAGER_PLUGIN and
+			self._isSpoolManagerInstalledAndEnabled() == False):
+			currentFilamentTrackingPlugin = SettingsKeys.KEY_SELECTED_NONE_PLUGIN
 
-		if ( (currentFilamentTrackingPlugin == SettingsKeys.KEY_SELECTED_FILAMENTMANAGER_PLUGIN) and
-			 (self._isFilamentManagerInstalledAndEnabled() == False) ):
-			self._settings.set([SettingsKeys.SETTINGS_KEY_SELECTED_FILAMENTTRACKER_PLUGIN], SettingsKeys.KEY_SELECTED_NONE_PLUGIN)
-			self._settings.save()
+		self._settings.set([SettingsKeys.SETTINGS_KEY_SELECTED_FILAMENTTRACKER_PLUGIN], currentFilamentTrackingPlugin)
+		self._settings.save()
 
 		notifyUser = self._settings.get_boolean([SettingsKeys.SETTINGS_KEY_NO_NOTIFICATION_FILAMENTTRACKERING_PLUGIN_SELECTION]) == False
-		if ( (self._isSpoolManagerInstalledAndEnabled() == True or self._isSpoolmanInstalledAndEnabled() == True or self._isFilamentManagerInstalledAndEnabled() == True) and
-			 (self._settings.get([SettingsKeys.SETTINGS_KEY_SELECTED_FILAMENTTRACKER_PLUGIN]) == SettingsKeys.KEY_SELECTED_NONE_PLUGIN) ):
-				# Plugins installed, but currently 'none' is selected
-				self._logger.warning("Filamentracking is disabled, but some plugins are installed!");
-				if (notifyUser):
-					self._sendMessageToClient("notice", "Filamenttracking is possible!", "Select an tracking plugin in settings", True)
-		else:
-			if (self._settings.get([SettingsKeys.SETTINGS_KEY_SELECTED_FILAMENTTRACKER_PLUGIN]) == SettingsKeys.KEY_SELECTED_NONE_PLUGIN):
-				if (notifyUser):
-					self._sendMessageToClient("notice", "Filamenttracking not possible!",
-											  "No tracking plugin is installed/enabled", True)
+
+		# Users of a dropped tracker would otherwise just see their filament data stop appearing.
+		if (droppedTrackerName != None):
+			self._logger.warning("Filament tracker '" + droppedTrackerName + "' is no longer supported")
+			if (notifyUser):
+				self._sendMessageToClient("notice", droppedTrackerName + " is no longer supported",
+										  "Filament data now comes from SpoolManagerExtended. Install it to keep tracking filament usage and cost.")
+		elif (self._isSpoolManagerInstalledAndEnabled() == False):
+			self._logger.warning("Filamenttracking not possible, SpoolManagerExtended is not installed/enabled")
+			if (notifyUser):
+				self._sendMessageToClient("notice", "Filamenttracking not possible!",
+										  "SpoolManagerExtended is not installed/enabled", True)
 
 	def _isSpoolManagerInstalledAndEnabled(self):
 		return True if self._spoolManagerPluginImplementation != None and self._spoolManagerPluginImplementationState == "enabled" else False
 
-	def _isSpoolmanInstalledAndEnabled(self):
-		return True if self._spoolmanPluginImplementation != None and self._spoolmanPluginImplementationState == "enabled" else False
-
-	def _isFilamentManagerInstalledAndEnabled(self):
-		return True if self._filamentManagerPluginImplementation != None and self._filamentManagerPluginImplementationState == "enabled" else False
+	def _isTasmotaInstalledAndEnabled(self):
+		return True if self._tasmotaPluginImplementation != None and self._tasmotaPluginImplementationState == "enabled" else False
 
 	def _isCostEstimationInstalledAndEnabled(self):
 		return True if self._costEstimationPluginImplementation != None and self._costEstimationPluginImplementationState == "enabled" else False
-
-	def _isPreHeatInstalledAndEnabled(self):
-		return True if self._preHeatPluginImplementation != None and self._preHeatPluginImplementationState == "enabled" else False
 
 
 
@@ -426,7 +376,12 @@ class PrintJobHistoryExtendedPlugin(
 		# - grab calcualted data for each tool
 		# - grap measured data for each tool
 		filamentCalculatedDict = self._readCalculatedFilamentMetaData(fileData)
-		filamentExtrusionArray = self._readMeasuredFilament()
+		# Preferred source: usage SpoolManagerExtended captured while booking the finished job.
+		# It is immune to the odometer reset race and covers printer-storage prints.
+		lastPrintJobUsage = self._readLastPrintJobUsage()
+		filamentExtrusionArray = None
+		if (lastPrintJobUsage == None):
+			filamentExtrusionArray = self._readMeasuredFilament()
 		selectedSpoolDataDict = self._getSelectedSpools()
 		# isMultiToolPrint = len(filamentCalculatedDict) > 1
 
@@ -492,7 +447,36 @@ class PrintJobHistoryExtendedPlugin(
 		totalFilamentModel.material = allMaterials
 
 		# - assign measured values
-		if (filamentExtrusionArray != None):
+		usedTotalLength = None
+		usedTotaWeight = None
+		usedTotalCost = None
+
+		if (lastPrintJobUsage != None):
+			self._logger.info("Using per-job usage from SpoolManagerExtended (source '" + str(lastPrintJobUsage.get("source")) + "')")
+			usedTotalLength = 0.0
+			usedTotaWeight = 0.0
+			usedTotalCost = 0.0
+			for toolUsage in lastPrintJobUsage.get("tools", []):
+				if (toolUsage == None):
+					continue
+				toolId = "tool" + str(toolUsage["toolIndex"])
+				filamentModel = printJob.getFilamentModelByToolId(toolId)
+				if (filamentModel == None):
+					filamentModel = FilamentModel()
+					filamentModel.toolId = toolId
+					printJob.addFilamentModel(filamentModel)
+
+				filamentModel.usedLength = toolUsage.get("usedLength")
+				filamentModel.usedWeight = toolUsage.get("usedWeight")
+				filamentModel.usedCost = toolUsage.get("usedCost")
+
+				usedTotalLength = usedTotalLength + StringUtils.transformToFloatOrZero(filamentModel.usedLength)
+				usedTotaWeight = usedTotaWeight + StringUtils.transformToFloatOrZero(filamentModel.usedWeight)
+				usedTotalCost = usedTotalCost + StringUtils.transformToFloatOrZero(filamentModel.usedCost)
+
+				self._logger.info(toolId + ": usedLength='"+str(filamentModel.usedLength)+"'; usedWeight='"+str(filamentModel.usedWeight)+"'; usedCost='"+str(filamentModel.usedCost)+"'")
+
+		elif (filamentExtrusionArray != None):
 			usedTotalLength = 0.0
 			usedTotaWeight = 0.0
 			usedTotalCost = 0.0
@@ -523,13 +507,17 @@ class PrintJobHistoryExtendedPlugin(
 				self._logger.info(toolId + ": usedLength='"+str(usedLength)+"'; usedWeight='"+str(filamentModel.usedWeight)+"'; usedCost='"+str(filamentModel.usedCost)+"'")
 
 				toolIndex = toolIndex + 1
-			# - add total values
-			filamentModel = printJob.getFilamentModelByToolId("total")
-			if (filamentModel == None):
-				filamentModel = FilamentModel()
-				filamentModel.toolId = "total"
-				printJob.addFilamentModel(filamentModel)
 
+			# SpoolManagerExtended resets its odometer while booking the finished job. If its
+			# PRINT_DONE handler won the race, everything reads zero even though the file says
+			# filament was needed - say so instead of silently storing a zero.
+			if (usedTotalLength == 0.0 and calculatedTotalLength > 0):
+				self._logger.warning(
+					"Measured filament is 0 although the file needs " + str(calculatedTotalLength) +
+					"mm. SpoolManagerExtended probably reset its odometer before this plugin could read it. "
+					"A SpoolManagerExtended version offering 'api_getLastPrintJobUsage' avoids this.")
+
+		if (usedTotalLength != None):
 			totalFilamentModel.usedLength = usedTotalLength
 			totalFilamentModel.usedWeight = usedTotaWeight
 			totalFilamentModel.usedCost = usedTotalCost
@@ -540,37 +528,39 @@ class PrintJobHistoryExtendedPlugin(
 	# read the total extrusion of each tool, like this
 	# return [123.123, 234.234, 0, 0]
 	def _readMeasuredFilament(self):
-		result = None
-		# get some data from the selected filament tracker plugin
-		filamentTrackerPlugin = self._settings.get([SettingsKeys.SETTINGS_KEY_SELECTED_FILAMENTTRACKER_PLUGIN])
-		if (SettingsKeys.KEY_SELECTED_SPOOLMANAGER_PLUGIN == filamentTrackerPlugin):
-			# get data from SPOOLMANAGER
-			try:
-				result = self._spoolManagerPluginImplementation.api_getExtrusionAmount()
-			except:
-				self._logger.warning("You don't use the latest SpoolManager Version 1.4+")
-			if (result == None):
-				# try the old way
-				result = self._spoolManagerPluginImplementation.myFilamentOdometer.getExtrusionAmount()
-			pass
-		elif (SettingsKeys.KEY_SELECTED_SPOOLMAN_PLUGIN == filamentTrackerPlugin):
-			# get data from SPOOLMAN
-
-			# TODO: should be replaced with a proper exposed function call
-			# Currently, we rely on the fact, that the PRINT_DONE event of this plugin is executed before Spoolman.
-			# Spoolman clears the extrusionAmount after handling the PRINT_DONE event.
-			peek_stats_helpers = self._spoolmanPluginImplementation.lastPrintOdometerLoad.send(False)
-			current_extrusion_stats = peek_stats_helpers['get_current_extrusion_stats']()
-			result = current_extrusion_stats['extrusionAmount'][:]
-
-			pass
-		elif (SettingsKeys.KEY_SELECTED_FILAMENTMANAGER_PLUGIN == filamentTrackerPlugin):
-			# myFilamentOdometer, since FilamentManager V1.7.2
-			result = self._filamentManagerPluginImplementation.myFilamentOdometer.getExtrusionAmount()
-			pass
-		else:
+		if (self._isSpoolManagerInstalledAndEnabled() == False):
 			self._logger.info("There is no plugin for filament tracking available. Installed and Enabled?")
+			return None
+
+		result = None
+		try:
+			result = self._spoolManagerPluginImplementation.api_getExtrusionAmount()
+		except Exception as e:
+			self._logger.error("Could not read extrusion amount from SpoolManagerExtended: " + str(e))
 		return result
+
+	# per-tool usage already booked by SpoolManagerExtended, including its sliced-metadata
+	# fallback for printers whose extrusion the odometer never sees (Bambu and friends).
+	# Returns None when the peer plugin does not offer the newer API yet.
+	def _readLastPrintJobUsage(self):
+		if (self._isSpoolManagerInstalledAndEnabled() == False):
+			return None
+		if (hasattr(self._spoolManagerPluginImplementation, "api_getLastPrintJobUsage") == False):
+			return None
+
+		usage = None
+		try:
+			usage = self._spoolManagerPluginImplementation.api_getLastPrintJobUsage()
+		except Exception as e:
+			self._logger.error("Could not read last print job usage from SpoolManagerExtended: " + str(e))
+			return None
+
+		if (usage == None):
+			return None
+		if (usage.get("apiVersion", 0) < 1):
+			self._logger.warning("SpoolManagerExtended reports an unsupported usage apiVersion, ignoring it")
+			return None
+		return usage
 
 	# dict of this
 	# {u'tool4': {u'volume': 185.20129656279946, u'length': 76997.75167999369},
@@ -592,120 +582,37 @@ class PrintJobHistoryExtendedPlugin(
 	# 'tool1': {}
 	# },
 	def _getSelectedSpools(self):
-		result = None
-		# get some data from the selected filament tracker plugin
-		filamentTrackerPlugin = self._settings.get([SettingsKeys.SETTINGS_KEY_SELECTED_FILAMENTTRACKER_PLUGIN])
-		if (SettingsKeys.KEY_SELECTED_SPOOLMANAGER_PLUGIN == filamentTrackerPlugin):
-			self._logger.info("Try reading filament from SpoolManager...")
-			# get data from SPOOLMANAGER
-			selectedSpoolInformations = self._spoolManagerPluginImplementation.api_getSelectedSpoolInformations()
-			if (selectedSpoolInformations != None):
-				result = {}
-				for spoolData in selectedSpoolInformations:
-					if (spoolData != None):
-						toolId = "tool" + str(spoolData["toolIndex"])
-						databaseId = spoolData["databaseId"]
-						spoolName = spoolData["spoolName"]
-						weight = spoolData["weight"]
-						spoolCost = spoolData["cost"]
-
-						material = spoolData["material"]
-						vendor = spoolData["vendor"]
-						density = spoolData["density"]
-						diameter = spoolData["diameter"]
-
-						result[toolId] = {
-							"databaseId": databaseId,
-							"spoolName": spoolName,
-							"material": material,
-							"vendor":  vendor,
-							"density": density,
-							"diameter":  diameter,
-							"spoolCost": spoolCost,
-							"weight": weight
-						}
-						self._logger.info(
-							" reading for '" + toolId + "',  Spool: '" + spoolName + "', Material: '" + material + "', Vendor: '" + vendor + "'")
-			pass
-		elif (SettingsKeys.KEY_SELECTED_SPOOLMAN_PLUGIN == filamentTrackerPlugin):
-			self._logger.info("Try reading filament from Spoolman...")
-			# get data from SPOOLMAN
-
-			# TODO: should be replaced with a proper exposed function call
-			# Especially getting the selected spools via a protected _settings variable is BAD
-			spools_available = self._spoolmanPluginImplementation.getSpoolmanConnector().handleGetSpoolsAvailable()
-			selected_spool_ids = self._spoolmanPluginImplementation._settings.get(['selectedSpoolIds'])
-
-			spool_by_id = {str(spool['id']): spool for spool in spools_available['data']['spools']}
-
-			spools = {}
-			for tool_id, spool_id in selected_spool_ids.items():
-				spool = spool_by_id.get(spool_id['spoolId'])
-				if spool:
-					spools[tool_id] = spool
-				else:
-					spools[tool_id] = None
-
-			result = {}
-			for toolId, spoolData in spools.items():
-				if (spoolData != None):
-					toolId = "tool" + toolId
-					spoolName = spoolData["filament"]["name"]
-					weight = spoolData["filament"]["weight"]
-					spoolCost = spoolData["price"]
-
-					material = spoolData["filament"]["material"]
-					vendor = spoolData["filament"]["vendor"]["name"]
-					density = spoolData["filament"]["density"]
-					diameter = spoolData["filament"]["diameter"]
-
-					result[toolId] = {
-						"spoolName": spoolName,
-						"material": material,
-						"vendor":  vendor,
-						"density": density,
-						"diameter":  diameter,
-						"spoolCost": spoolCost,
-						"weight": weight
-					}
-					self._logger.info(
-						" reading for '" + toolId + "',  Spool: '" + spoolName + "', Material: '" + material + "', Vendor: '" + vendor + "'")
-			pass
-		elif (SettingsKeys.KEY_SELECTED_FILAMENTMANAGER_PLUGIN == filamentTrackerPlugin):
-			self._logger.info("Try reading filament from FilamentManager...")
-			# myFilamentOdometer, since FilamentManager V1.7.2
-			selectedSpools = self._filamentManagerPluginImplementation.filamentManager.get_all_selections(self._filamentManagerPluginImplementation.client_id)
-			if selectedSpools != None and len(selectedSpools) > 0:
-				result = {}
-				for currentSpoolData in selectedSpools:
-					toolId = "tool" + str(currentSpoolData["tool"])
-					spoolData = currentSpoolData["spool"]
-					databaseId = spoolData["id"]
-					spoolName = spoolData["name"]
-					weight = spoolData["weight"]
-					spoolCost = spoolData["cost"]
-
-					profileData = spoolData["profile"]
-					material = profileData["material"]
-					vendor = profileData["vendor"]
-					density = profileData["density"]
-					diameter = profileData["diameter"]
-
-					result[toolId] = {
-						"databaseId": databaseId,
-						"spoolName": spoolName,
-					    "material": material,
-					    "vendor":  vendor,
-					    "density": density,
-					  	"diameter":  diameter,
-						"spoolCost": spoolCost,
-						"weight": weight
-					}
-					self._logger.info(" reading for '"+toolId+"',  Spool: '"+spoolName+"', Material: '"+material+"', Vendor: '"+vendor+"'")
-					pass
-			pass
-		else:
+		if (self._isSpoolManagerInstalledAndEnabled() == False):
 			self._logger.info("There is no plugin for spool selection. Installed and Enabled?")
+			return None
+
+		self._logger.info("Try reading filament from SpoolManagerExtended...")
+		try:
+			selectedSpoolInformations = self._spoolManagerPluginImplementation.api_getSelectedSpoolInformations()
+		except Exception as e:
+			self._logger.error("Could not read selected spools from SpoolManagerExtended: " + str(e))
+			return None
+
+		if (selectedSpoolInformations == None):
+			return None
+
+		result = {}
+		for spoolData in selectedSpoolInformations:
+			if (spoolData == None):
+				continue
+			toolId = "tool" + str(spoolData["toolIndex"])
+			result[toolId] = {
+				"databaseId": spoolData["databaseId"],
+				"spoolName": spoolData["spoolName"],
+				"material": spoolData["material"],
+				"vendor": spoolData["vendor"],
+				"density": spoolData["density"],
+				"diameter": spoolData["diameter"],
+				"spoolCost": spoolData["cost"],
+				"weight": spoolData["weight"]
+			}
+			self._logger.info(
+				" reading for '" + toolId + "',  Spool: '" + str(spoolData["spoolName"]) + "', Material: '" + str(spoolData["material"]) + "', Vendor: '" + str(spoolData["vendor"]) + "'")
 		return result
 
 	def _calculateFilamentWeightForLength(self, usedLength, diameter, density):
@@ -742,43 +649,9 @@ class PrintJobHistoryExtendedPlugin(
 			self._currentPrintJobModel.userName = "John Doe"
 		self._currentPrintJobModel.fileSize = payload["size"]
 
-		tempFound = False
-		toolId = self._settings.get([SettingsKeys.SETTINGS_KEY_DEFAULT_TOOL_ID])
-		tempTool = -1
-		tempBed = 0
-
-		shouldReadTemperatureFromPreHeat = self._settings.get_boolean(
-			[SettingsKeys.SETTINGS_KEY_TAKE_TEMPERATURE_FROM_PREHEAT])
-		if (shouldReadTemperatureFromPreHeat == True):
-			self._logger.info("Try reading Temperature from PreHeat-Plugin...")
-
-			if (self._preHeatPluginImplementation != None):
-				path_on_disk = octoprint.server.fileManager.path_on_disk(self._currentPrintJobModel.fileOrigin,
-																		 self._currentPrintJobModel.filePathName)
-
-				preHeatTemperature = self._preHeatPluginImplementation.read_temperatures_from_file(path_on_disk)
-				if preHeatTemperature != None:
-					if "bed" in preHeatTemperature:
-						tempBed = preHeatTemperature["bed"]
-						tempFound = True
-					if toolId in preHeatTemperature:
-						tempTool = preHeatTemperature[toolId]  # "tool0"
-						tempFound = True
-					else:
-						self._logger.warning(
-							"... PreHeat-Temperatures does not include default Extruder-Tool '" + toolId + "'")
-				pass
-			else:
-				self._logger.warning("... PreHeat Button Plugin not installed/enabled")
-
-		if (tempFound == True):
-			self._logger.info(
-				"... Temperature found '" + str(tempBed) + "' Tool '" + toolId + "' '" + str(tempTool) + "'")
-			self._addTemperatureToPrintModel(self._currentPrintJobModel, tempBed, toolId, tempTool)
-		else:
-			# readTemperatureFromPrinter
-			# because temperature is 0 at the beginning, we need to wait a couple of seconds (maybe 3)
-			self._readAndAssignCurrentTemperatureDelayed(self._currentPrintJobModel)
+		# readTemperatureFromPrinter
+		# because temperature is 0 at the beginning, we need to wait a couple of seconds (maybe 3)
+		self._readAndAssignCurrentTemperatureDelayed(self._currentPrintJobModel)
 
 
 	def _readCurrentTemperatureFromPrinterAsync(self, printer, printJobModel, addTemperatureToPrintModel):
@@ -827,96 +700,216 @@ class PrintJobHistoryExtendedPlugin(
 	def _addCostsToPrintModel(self, printJobModel):
 
 		self._logger.info("----- Start reading costs -----")
-		#             var costData = {
-		#                 filename: filename,
-		#                 filepath: filepath,
-		#                 costResult: costResult,
-		#                 filamentCost: filamentCost,
-		#                 electricityCost: electricityCost,
-		#                 printerCost: printerCost,
-		#                 otherCostLabel: otherCostLabel,
-		#                 otherCost: otherCost,
-		#             }
-		if (self._isCostEstimationInstalledAndEnabled()):
-			# self._logger.info("Try reading Costs from CostEstimation-Plugin")
-			# costData = self._costEstimationPluginImplementation.api_getCurrentCostsValues()
 
-			# TODO own cost calculation
-			printTimeInSeconds = DateTimeUtils.calcDurationInSeconds(printJobModel.printEndDateTime, printJobModel.printStartDateTime)
-			allFilamentModels = printJobModel.getFilamentModels(withoutTotal=True)
-			self._logger.info("Try calculating Costs with CostEstimation-Plugin settings")
-			costData = self._calculateCostData(allFilamentModels , printTimeInSeconds)
+		printTimeInSeconds = DateTimeUtils.calcDurationInSeconds(printJobModel.printEndDateTime, printJobModel.printStartDateTime)
+		allFilamentModels = printJobModel.getFilamentModels(withoutTotal=True)
+		costData = self._calculateCostData(allFilamentModels, printTimeInSeconds,
+										   printJobModel.printStartDateTime, printJobModel.printEndDateTime)
 
-			totalCosts = costData["totalCosts"]	# float = 11.96
-			filamentCost = costData["filamentCost"] # float = 0.06002333...
-			electricityCost = costData["electricityCost"] # float = 0.0213454...
-			printerCost = costData["printerCost"] # float = 11.87653993...
-			# otherCostLabel = costData["otherCostLabel"] # str = Delivery
-			# otherCost = costData["otherCost"] # float = 11.87653993...
-			withDefaultSpoolValues = costData["withDefaultSpoolValues"] # boolean
+		costModel = CostModel()
+		costModel.totalCosts = costData["totalCosts"]
+		costModel.filamentCost = costData["filamentCost"]
+		costModel.electricityCost = costData["electricityCost"]
+		costModel.electricityKwh = costData["electricityKwh"]
+		costModel.printerCost = costData["printerCost"]
+		costModel.costSource = costData["costSource"]
+		costModel.withDefaultSpoolValues = costData["withDefaultSpoolValues"]
 
-			costModel = CostModel()
-			costModel.totalCosts = totalCosts
-			costModel.filamentCost = filamentCost
-			costModel.electricityCost = electricityCost
-			costModel.printerCost = printerCost
-			# costModel.otherCostLabel = otherCostLabel
-			# costModel.otherCost = otherCost
-			costModel.withDefaultSpoolValues = withDefaultSpoolValues
-
-			printJobModel.setCosts(costModel)
-			if ("filename" in costData):
-				costData.pop("filename")
-			if ("filepath" in costData):
-				costData.pop("filepath")
-			self._logger.info("Adding costs from CostEstimation-Plugin: "+ str(costData))
-		else:
-			self._logger.info("Costs could not captured, because CostEstimation-Plugin not installed/enabled")
-
-		pass
+		printJobModel.setCosts(costModel)
+		self._logger.info("Adding costs: " + str(costData))
 
 
-	def _calculateCostData(self, allFilamentModels, printTimeInSeconds):
+	# Printer cost used to be read out of the CostEstimation plugin's settings on every
+	# calculation. Those values are now owned here, so carry them over once instead of
+	# making the user retype what they already configured.
+	def _importCostEstimationSettingsOnce(self):
+		if (self._settings.get_boolean([SettingsKeys.SETTINGS_KEY_COSTESTIMATION_IMPORTED]) == True):
+			return
+		if (self._isCostEstimationInstalledAndEnabled() == False):
+			return
+
+		try:
+			foreignSettings = self._costEstimationPluginImplementation._settings
+			importedKeys = [
+				(SettingsKeys.SETTINGS_KEY_PRINTER_PURCHASE_PRICE, "priceOfPrinter"),
+				(SettingsKeys.SETTINGS_KEY_PRINTER_LIFESPAN_HOURS, "lifespanOfPrinter"),
+				(SettingsKeys.SETTINGS_KEY_PRINTER_MAINTENANCE_PER_HOUR, "maintenanceCosts"),
+				(SettingsKeys.SETTINGS_KEY_ELECTRICITY_COST_PER_KWH, "costOfElectricity"),
+				(SettingsKeys.SETTINGS_KEY_CURRENCY_SYMBOL, "currency"),
+				(SettingsKeys.SETTINGS_KEY_CURRENCY_FORMAT, "currencyFormat")
+			]
+			for ownKey, foreignKey in importedKeys:
+				value = foreignSettings.get([foreignKey])
+				if (StringUtils.isNotEmpty(value)):
+					self._settings.set([ownKey], value)
+					self._logger.info("Imported '" + foreignKey + "' from CostEstimation as '" + ownKey + "'")
+		except Exception as e:
+			self._logger.error("Could not import settings from CostEstimation: " + str(e))
+			return
+
+		self._settings.set_boolean([SettingsKeys.SETTINGS_KEY_COSTESTIMATION_IMPORTED], True)
+		self._settings.save()
+		self._sendMessageToClient("info", "Cost settings imported",
+								  "Printer cost settings were taken over from the CostEstimation plugin. This plugin no longer needs it.")
+
+	# Tasmota has no notion of "this plug powers the printer", so the user has to pick one.
+	# Its plugs are identified by the pair (ip, idx); the label is only for display.
+	def _readTasmotaPlugs(self):
+		if (self._isTasmotaInstalledAndEnabled() == False):
+			return []
+
+		result = []
+		try:
+			configuredPlugs = self._settings.global_get(["plugins", "tasmota", "arrSmartplugs"])
+			if (configuredPlugs == None):
+				return []
+			for plug in configuredPlugs:
+				plugIp = plug.get("ip")
+				plugIdx = str(plug.get("idx", "1"))
+				if (StringUtils.isEmpty(plugIp)):
+					continue
+				label = plug.get("label")
+				if (StringUtils.isEmpty(label)):
+					label = plugIp
+				result.append({
+					"ip": plugIp,
+					"idx": plugIdx,
+					"label": label + " (" + plugIp + ":" + plugIdx + ")"
+				})
+		except Exception as e:
+			self._logger.warning("Could not read Tasmota plug list: " + str(e))
+			return []
+		return result
+
+	# Measuring electricity needs samples inside the print window, but the Tasmota plugin
+	# polls only every few minutes and ships with polling switched off entirely.
+	def _checkTasmotaPolling(self):
+		if (self._isTasmotaInstalledAndEnabled() == False):
+			return
+		if (self._settings.get_boolean([SettingsKeys.SETTINGS_KEY_NO_NOTIFICATION_TASMOTA_POLLING]) == True):
+			return
+		if (StringUtils.isEmpty(self._settings.get([SettingsKeys.SETTINGS_KEY_TASMOTA_PLUG_IP]))):
+			return
+
+		# Note these are the snake_case keys Tasmota's defaults and its polling timer use.
+		pollingEnabled = self._settings.global_get(["plugins", "tasmota", "polling_enabled"])
+		pollingInterval = self._settings.global_get(["plugins", "tasmota", "polling_interval"])
+
+		if (pollingEnabled != True):
+			self._logger.warning("Tasmota polling is disabled, electricity cost cannot be measured")
+			self._sendMessageToClient("notice", "Tasmota polling is disabled",
+									  "Enable polling in the Tasmota plugin settings, otherwise no electricity cost can be recorded.")
+		elif (StringUtils.transformToFloatOrZero(pollingInterval) > 1):
+			self._logger.info("Tasmota polling interval is '" + str(pollingInterval) + "' minutes, short prints may not be measurable")
+			self._sendMessageToClient("notice", "Tasmota polling interval is coarse",
+									  "Polling every " + str(pollingInterval) + " minutes means short prints record too few samples. A 1 minute interval is recommended.")
+
+	# Energy consumed during the print window, in kWh, or None when it cannot be determined.
+	#
+	# The Tasmota plugin exposes no helper API, so its energy database is read directly. Its
+	# 'total' column is the plug's cumulative kWh counter, which makes the consumption of any
+	# window the difference between the last and the first sample inside it.
+	def _readMeasuredEnergyKwh(self, printStartDateTime, printEndDateTime):
+		if (printStartDateTime is None or printEndDateTime is None):
+			return None
+		if (self._isTasmotaInstalledAndEnabled() == False):
+			return None
+
+		plugIp = self._settings.get([SettingsKeys.SETTINGS_KEY_TASMOTA_PLUG_IP])
+		plugIdx = self._settings.get([SettingsKeys.SETTINGS_KEY_TASMOTA_PLUG_IDX])
+		if (StringUtils.isEmpty(plugIp) or StringUtils.isEmpty(plugIdx)):
+			self._logger.info("No Tasmota plug selected, skipping electricity measurement")
+			return None
+
+		databaseLocation = os.path.join(self.get_plugin_data_folder(), "..", "tasmota", "energy_data.db")
+		if (os.path.isfile(databaseLocation) == False):
+			self._logger.info("Tasmota energy database not found at '" + databaseLocation + "'")
+			return None
+
+		# Tasmota timestamps are naive local time, and so are our print timestamps, so they
+		# compare directly. Converting either side would break across a DST change.
+		fromTimestamp = printStartDateTime.strftime("%Y-%m-%d %H:%M:%S.%f")
+		toTimestamp = printEndDateTime.strftime("%Y-%m-%d %H:%M:%S.%f")
+
+		connection = None
+		try:
+			connection = sqlite3.connect("file:" + pathname2url(os.path.abspath(databaseLocation)) + "?mode=ro",
+										 uri=True, timeout=2.0)
+			row = connection.execute(
+				"SELECT MIN(total), MAX(total), COUNT(*) FROM energy_data "
+				"WHERE ip = ? AND idx = ? AND timestamp BETWEEN ? AND ?",
+				(plugIp, str(plugIdx), fromTimestamp, toTimestamp)).fetchone()
+		except Exception as e:
+			self._logger.warning("Could not read Tasmota energy database: " + str(e))
+			return None
+		finally:
+			if (connection != None):
+				connection.close()
+
+		if (row is None or row[0] is None or row[1] is None):
+			self._logger.info("No Tasmota energy samples recorded during the print")
+			return None
+
+		# A single sample carries no difference, so it says nothing about consumption.
+		sampleCount = row[2]
+		if (sampleCount < 2):
+			self._logger.info("Only " + str(sampleCount) + " Tasmota energy sample(s) during the print, too few to measure. Lower the Tasmota polling interval.")
+			return None
+
+		consumedKwh = row[1] - row[0]
+		# The plug's counter restarts at zero when it is reset, which makes the window meaningless.
+		if (consumedKwh < 0):
+			self._logger.warning("Tasmota energy counter decreased during the print, ignoring the measurement")
+			return None
+
+		self._logger.info("Measured '" + str(consumedKwh) + "' kWh from " + str(sampleCount) + " Tasmota samples")
+		return consumedKwh
+
+	def _calculateCostData(self, allFilamentModels, printTimeInSeconds, printStartDateTime=None, printEndDateTime=None):
 		#             var costData = {
 		#                 totalCosts:
 		#                 filamentCost: filamentCost,
 		#                 electricityCost: electricityCost,
+		#                 electricityKwh: electricityKwh,
 		#                 printerCost: printerCost,
+		#                 costSource: costSource,
 		# 				  withDefaultSpoolValues
 		#             }
 
 		withDefaultSpoolValues = False
 		printTimeInHours = printTimeInSeconds / 3600
 
-		# read cost-settings froom Cost-Plugin
-		currencySymbol = self._costEstimationPluginImplementation._settings.get(["currency"]) # Euro
-		currencyFormat = self._costEstimationPluginImplementation._settings.get(["currencyFormat"]) # Euro
-
-		# calc: electricityCost
+		# calc: electricityCost, from energy the Tasmota plugin actually measured.
+		# No estimation fallback on purpose: a guessed number is worse than an empty field.
 		electricityCost = None
-		powerConsumption = self._costEstimationPluginImplementation._settings.get(["powerConsumption"]) # kW
-		costOfElectricity = self._costEstimationPluginImplementation._settings.get(["costOfElectricity"]) # Euro/kWh
-
-		powerConsumption = StringUtils.transformToFloatOrNone(powerConsumption)
-		costOfElectricity = StringUtils.transformToFloatOrNone(costOfElectricity)
-		if (powerConsumption is None or costOfElectricity is None):
-			self._logger.error(
-				"Could not calculate electricityCost, because powerConsumption or costOfElectricity is none")
+		electricityKwh = None
+		costSource = "none"
+		measuredKwh = self._readMeasuredEnergyKwh(printStartDateTime, printEndDateTime)
+		if (measuredKwh is None):
+			self._logger.info("No measured energy data available, electricity cost stays empty")
 		else:
-			costPerHour = powerConsumption * costOfElectricity
-			electricityCost = costPerHour * printTimeInHours
-			self._logger.info("costPerHour '"+str(costPerHour)+"' = powerConsumption '"+str(powerConsumption)+"' * costOfElectricity '"+str(costOfElectricity)+"'" )
-			self._logger.info("electricityCost '"+str(electricityCost)+"' = costPerHour '"+str(costPerHour)+"' * printTimeInHours '"+str(printTimeInHours)+"'" )
+			costPerKwh = StringUtils.transformToFloatOrNone(
+				self._settings.get([SettingsKeys.SETTINGS_KEY_ELECTRICITY_COST_PER_KWH]))
+			electricityKwh = measuredKwh
+			costSource = "tasmota"
+			if (costPerKwh is None):
+				self._logger.error("Measured '"+str(measuredKwh)+"' kWh, but no electricity price is configured")
+			else:
+				electricityCost = measuredKwh * costPerKwh
+				self._logger.info("electricityCost '"+str(electricityCost)+"' = measured '"+str(measuredKwh)+"' kWh * costPerKwh '"+str(costPerKwh)+"'")
 
 		# calc: printerCost
 		printerCost = None
-		priceOfPrinter = self._costEstimationPluginImplementation._settings.get(["priceOfPrinter"]) # Euro
-		lifespanOfPrinter = self._costEstimationPluginImplementation._settings.get(["lifespanOfPrinter"]) # h
-		maintenanceCosts = self._costEstimationPluginImplementation._settings.get(["maintenanceCosts"]) # Euro/h
-
-		priceOfPrinter = StringUtils.transformToFloatOrNone(priceOfPrinter)
-		lifespanOfPrinter = StringUtils.transformToFloatOrNone(lifespanOfPrinter)
-		maintenancePerHour = StringUtils.transformToFloatOrNone(maintenanceCosts)
+		priceOfPrinter = StringUtils.transformToFloatOrNone(
+			self._settings.get([SettingsKeys.SETTINGS_KEY_PRINTER_PURCHASE_PRICE]))
+		lifespanOfPrinter = StringUtils.transformToFloatOrNone(
+			self._settings.get([SettingsKeys.SETTINGS_KEY_PRINTER_LIFESPAN_HOURS]))
+		maintenancePerHour = StringUtils.transformToFloatOrNone(
+			self._settings.get([SettingsKeys.SETTINGS_KEY_PRINTER_MAINTENANCE_PER_HOUR]))
+		wearMultiplier = StringUtils.transformToFloatOrNone(
+			self._settings.get([SettingsKeys.SETTINGS_KEY_PRINTER_WEAR_MULTIPLIER]))
+		if (wearMultiplier is None):
+			wearMultiplier = 1.0
 
 		if (priceOfPrinter is None or lifespanOfPrinter is None or maintenancePerHour is None):
 			self._logger.error(
@@ -924,109 +917,41 @@ class PrintJobHistoryExtendedPlugin(
 		else:
 			# 	value_when_true if condition else value_when_false
 			depreciationPerHour = priceOfPrinter / lifespanOfPrinter if lifespanOfPrinter > 0 else 0
-			printerCost = (depreciationPerHour + maintenancePerHour) * printTimeInHours
-			self._logger.info("printerCost '"+str(printerCost)+"' = (depreciationPerHour '"+str(depreciationPerHour)+"' + maintenancePerHour '"+str(maintenancePerHour)+"') * printTimeInHours '"+str(printTimeInHours)+"'" )
+			printerCost = (depreciationPerHour + maintenancePerHour) * wearMultiplier * printTimeInHours
+			self._logger.info("printerCost '"+str(printerCost)+"' = (depreciationPerHour '"+str(depreciationPerHour)+"' + maintenancePerHour '"+str(maintenancePerHour)+"') * wearMultiplier '"+str(wearMultiplier)+"' * printTimeInHours '"+str(printTimeInHours)+"'" )
 
 		# calc: filamentCost
 		filamentCost = None
-		# - do we have measured filament values or should we use default values
-		costOfFilament = None
-		weightOfFilament = None
-		densityOfFilament = None
-		diameterOfFilament = None
 		if (allFilamentModels == None):
-			#  filament default values
 			self._logger.error("No measured/needed filament present. FilamentCost calculation not possible. Maybe metadata not assigned in json file.")
 		else:
 
-			# do we have fillamennt-informations for cost-calculation, if not use default filament parameters
-			# we need:
-			# 1. used filament (per tool)
-			# 2. diameterOfFilament
-			# 3. densityOfFilament
-			# 4. spooldata (costOfFilament, weightOfFilament)
-			# if 1 is not available -> skip
-			# if 2,3 or 4 not available use default values from cost-plugin
+			# Material cost per tool comes from SpoolManagerExtended, which knows the spool
+			# price and the weight consumed. usedCost is already per-job; only sum it here.
+			for filamentModel in allFilamentModels:
+				toolId = filamentModel.toolId # tool0
 
-			if (allFilamentModels[0].usedLength is None):
-				self._logger.error(
-					"No used filament present. FilamentCost calculation not possible. Maybe no filament tracker, like SpoolManager installed.")
-			else:
-				calcWithDefaultValuesPossible = None
-				self._logger.info("Trying to read default filament values, for 'fallback-calculation'")
-				default_costOfFilament = self._costEstimationPluginImplementation._settings.get(["costOfFilament"])  # Euro
-				default_weightOfFilament = self._costEstimationPluginImplementation._settings.get(["weightOfFilament"])  # g
-				default_densityOfFilament = self._costEstimationPluginImplementation._settings.get(["densityOfFilament"])  # g/cm3
-				default_diameterOfFilament = self._costEstimationPluginImplementation._settings.get(["diameterOfFilament"])  # mm
+				if (filamentModel.usedCost != None):
+					filamentCost = StringUtils.transformToFloatOrZero(filamentCost) + filamentModel.usedCost
+					self._logger.info("filamentCost for '"+toolId+"' = '"+str(filamentModel.usedCost)+"'")
+					continue
 
-				default_costOfFilament = StringUtils.transformToFloatOrNone(default_costOfFilament)
-				default_weightOfFilament = StringUtils.transformToFloatOrNone(default_weightOfFilament)
-				default_densityOfFilament = StringUtils.transformToFloatOrNone(default_densityOfFilament)
-				default_diameterOfFilament = StringUtils.transformToFloatOrNone(default_diameterOfFilament)
-				if (default_costOfFilament is None or default_weightOfFilament is None or default_densityOfFilament is None or default_diameterOfFilament is None):
-					self._logger.warning(
-						"Fallback calculation for filamentCost not possible, because Default costOfFilament or weightOfFilament or densityOfFilament is diameterOfFilament none")
-					calcWithDefaultValuesPossible = False
-				else:
-					calcWithDefaultValuesPossible = True
+				# No spool cost booked - fall back to the spool price and the weight we measured.
+				usedLength = filamentModel.usedLength
+				if (usedLength == None or usedLength == 0.0):
+					self._logger.info("No filament calculation for '"+toolId+"', because usedLength is 0")
+					continue
 
-				for filamentModel in allFilamentModels:
-					usedLength = filamentModel.usedLength
-					toolId = filamentModel.toolId # tool0
-					diameterOfFilament = filamentModel.diameter
-					densityOfFilament = filamentModel.density
-					costOfFilament = filamentModel.spoolCost
-					weightOfFilament = filamentModel.weight
+				if (filamentModel.spoolCost is None or filamentModel.weight is None or
+					filamentModel.diameter is None or filamentModel.density is None):
+					self._logger.info("No filament cost for '"+toolId+"', spool data is incomplete")
+					withDefaultSpoolValues = True
+					continue
 
-					if (usedLength == None or usedLength == 0.0):
-						self._logger.info("No filament calculation for '"+toolId+"', because usedLength is 0")
-						continue
-
-					if (diameterOfFilament is None):
-						if (calcWithDefaultValuesPossible):
-							self._logger.info("No filament diameter from filamenttracker, using default '"+str(default_diameterOfFilament)+"'")
-							diameterOfFilament = default_diameterOfFilament
-							withDefaultSpoolValues = True
-						else:
-							self._logger.info(
-								"No filament diameter from filamenttracker or as default value")
-							continue
-					if (densityOfFilament is None):
-						if (calcWithDefaultValuesPossible):
-							self._logger.info("No filament densityOfFilament from filamenttracker, using default '"+str(default_densityOfFilament)+"'")
-							densityOfFilament = default_densityOfFilament
-							withDefaultSpoolValues = True
-						else:
-							self._logger.info(
-								"No filament densityOfFilament from filamenttracker or as default value")
-							continue
-					if (costOfFilament is None):
-						if (calcWithDefaultValuesPossible):
-							self._logger.info("No filament costOfFilament from filamenttracker, using default '"+str(default_costOfFilament)+"'")
-							costOfFilament = default_costOfFilament
-							withDefaultSpoolValues = True
-						else:
-							self._logger.info(
-								"No filament costOfFilament from filamenttracker or as default value")
-							continue
-					if (weightOfFilament is None):
-						if (calcWithDefaultValuesPossible):
-							self._logger.info("No filament weightOfFilament from filamenttracker, using default '"+str(default_weightOfFilament)+"'")
-							weightOfFilament = default_weightOfFilament
-							withDefaultSpoolValues = True
-						else:
-							self._logger.info(
-								"No filament weightOfFilament from filamenttracker or as default value")
-							continue
-
-					self._logger.info("Filament cost calculation for '" + toolId + "'")
-					# calculated used cost of this curretn tool
-					costPerWeight =  costOfFilament / weightOfFilament
-					self._logger.info("Cost per weight '"+str(costPerWeight)+"' =  costOfFilament '"+str(costOfFilament)+"' / weightOfFilament '"+str(weightOfFilament)+"'")
-					volumeWeight =  self._calculateFilamentWeightForLength(usedLength, diameterOfFilament, densityOfFilament)
-					filamentCost = StringUtils.transformToFloatOrZero(filamentCost) + (costPerWeight * volumeWeight)
-					self._logger.info("filamentCost '"+str(filamentCost)+"' = costPerWeight '"+str(costPerWeight)+"' * volumeWeight '"+str(volumeWeight)+"'")
-					pass
+				costPerWeight = filamentModel.spoolCost / filamentModel.weight
+				volumeWeight = self._calculateFilamentWeightForLength(usedLength, filamentModel.diameter, filamentModel.density)
+				filamentCost = StringUtils.transformToFloatOrZero(filamentCost) + (costPerWeight * volumeWeight)
+				self._logger.info("filamentCost '"+str(filamentCost)+"' = costPerWeight '"+str(costPerWeight)+"' * volumeWeight '"+str(volumeWeight)+"'")
 
 		# calc: totalCost
 
@@ -1035,10 +960,11 @@ class PrintJobHistoryExtendedPlugin(
 
 		costData = dict(
 						totalCosts=totalCost,
-						# filamentCost=filamentCost,
 						filamentCost=filamentCost,
-						electricityCost=electricityCost,# done
+						electricityCost=electricityCost,
+						electricityKwh=electricityKwh,
 			 			printerCost=printerCost,
+						costSource=costSource,
 						withDefaultSpoolValues=withDefaultSpoolValues
 		)
 		return costData
@@ -1258,6 +1184,8 @@ class PrintJobHistoryExtendedPlugin(
 		# check if needed plugins were available
 		self._checkAndLoadThirdPartyPluginInfos(False) # don't inform the client, because client is maybe not opened
 
+		self._importCostEstimationSettingsOnce()
+
 		# helpers = self._plugin_manager.get_helpers("multicam")
 		# if helpers and "get_webcam_profiles" in helpers:
 		# 	get_webcam_profiles = helpers["get_webcam_profiles"]
@@ -1370,21 +1298,15 @@ class PrintJobHistoryExtendedPlugin(
 			if (hasattr(self, "_databaseManager") == True):
 				databaseFileLocation = self._databaseManager.getDatabaseFileLocation()
 				snapshotFileLocation = self._cameraManager.getSnapshotFileLocation()
-				# Eval currencySymbol
 				currencySymbol = self._settings.get([SettingsKeys.SETTINGS_KEY_CURRENCY_SYMBOL])
 				currencyFormat = self._settings.get([SettingsKeys.SETTINGS_KEY_CURRENCY_FORMAT])
-				if (self._isCostEstimationInstalledAndEnabled()):
-					currencySymbol = self._costEstimationPluginImplementation._settings.get(["currency"])
-					currencyFormat = self._costEstimationPluginImplementation._settings.get(["currencyFormat"])
 				self._sendDataToClient(dict(action="initalData",
 											databaseFileLocation=databaseFileLocation,
 											snapshotFileLocation=snapshotFileLocation,
 											isPrintHistoryPluginAvailable=self._printHistoryPluginImplementation != None,
 											isSpoolManagerInstalled = self._isSpoolManagerInstalledAndEnabled(),
-											isSpoolmanInstalled = self._isSpoolmanInstalledAndEnabled(),
-											isFilamentManagerInstalled = self._isFilamentManagerInstalledAndEnabled(),
-											isCostEstimationPluginAvailable = self._isCostEstimationInstalledAndEnabled(),
-											isPreHeatPluginAvailable = self._isPreHeatInstalledAndEnabled(),
+											isTasmotaInstalled = self._isTasmotaInstalledAndEnabled(),
+											tasmotaPlugs = self._readTasmotaPlugs(),
 											currencySymbol = currencySymbol,
 											currencyFormat = currencyFormat,
 											))
@@ -1425,6 +1347,7 @@ class PrintJobHistoryExtendedPlugin(
 				self._sendMessageConfirmToClient(messageConfirmData.title, messageConfirmData.message)
 
 			self._checkForMissingFilamentTracking()
+			self._checkTasmotaPolling()
 
 		elif Events.PRINT_STARTED == event:
 			self._printJobStarted(payload)
@@ -1550,6 +1473,20 @@ class PrintJobHistoryExtendedPlugin(
 		settings[SettingsKeys.SETTINGS_KEY_CURRENCY_SYMBOL] = "€"
 		settings[SettingsKeys.SETTINGS_KEY_CURRENCY_FORMAT] = "%v %s"
 
+		## Printer running cost. No made-up numbers: the purchase price and lifespan are
+		## specific to the machine, so they stay empty until the user fills them in.
+		settings[SettingsKeys.SETTINGS_KEY_PRINTER_PURCHASE_PRICE] = ""
+		settings[SettingsKeys.SETTINGS_KEY_PRINTER_LIFESPAN_HOURS] = ""
+		settings[SettingsKeys.SETTINGS_KEY_PRINTER_MAINTENANCE_PER_HOUR] = ""
+		# 1.0 means "no extra wear assumed" - see the settings help text.
+		settings[SettingsKeys.SETTINGS_KEY_PRINTER_WEAR_MULTIPLIER] = 1.0
+		settings[SettingsKeys.SETTINGS_KEY_COSTESTIMATION_IMPORTED] = False
+
+		## Electricity
+		settings[SettingsKeys.SETTINGS_KEY_TASMOTA_PLUG_IP] = ""
+		settings[SettingsKeys.SETTINGS_KEY_TASMOTA_PLUG_IDX] = ""
+		settings[SettingsKeys.SETTINGS_KEY_ELECTRICITY_COST_PER_KWH] = ""
+		settings[SettingsKeys.SETTINGS_KEY_NO_NOTIFICATION_TASMOTA_POLLING] = False
 
 		## Camera
 		settings[SettingsKeys.SETTINGS_KEY_TAKE_SNAPSHOT_AFTER_PRINT] = True
@@ -1561,7 +1498,6 @@ class PrintJobHistoryExtendedPlugin(
 
 		## Temperature
 		settings[SettingsKeys.SETTINGS_KEY_DEFAULT_TOOL_ID] = "tool0"
-		settings[SettingsKeys.SETTINGS_KEY_TAKE_TEMPERATURE_FROM_PREHEAT] = True
 		settings[SettingsKeys.SETTINGS_KEY_DELAY_READING_TEMPERATURE_FROM_PRINTER] = 60
 
 		## Export / Import

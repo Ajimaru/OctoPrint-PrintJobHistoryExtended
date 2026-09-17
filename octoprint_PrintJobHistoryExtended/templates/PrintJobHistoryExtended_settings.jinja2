@@ -71,35 +71,17 @@
                 <hr/>
                 <div class="control-group">
                     <div class="controls">
-                        <label class="" >
-                            Filament tracking is done by: <span data-bind="text: pluginSettings.selectedFilamentTrackerPlugin"></span>
-                        </label>
-                    </div>
-                </div>
-                <div class="control-group" >
-                    <div class="controls">
                         <label class="">
-                            Select preferred filament tracker:
-                                <label class="checkbox">
-                                    <input  style="margin-top:-4px" type="radio" name="selectedFilamentTrackerPlugin" value="none" data-bind="checked: pluginSettings.selectedFilamentTrackerPlugin"> None
-                                </label>
-                                <label class="checkbox">
-                                    <input  style="margin-top:-4px" type="radio" name="selectedFilamentTrackerPlugin" value="SpoolManager Plugin" data-bind="checked: pluginSettings.selectedFilamentTrackerPlugin, enable:isSpoolManagerInstalled()"> SpoolManager-Plugin (Version 1.4.2+)
-                                </label>
-                                <label class="checkbox">
-                                    <input  style="margin-top:-4px" type="radio" name="selectedFilamentTrackerPlugin" value="Spoolman Plugin" data-bind="checked: pluginSettings.selectedFilamentTrackerPlugin, enable:isSpoolmanInstalled()"> Spoolman-Plugin (Version 1.3.0+)
-                                </label>
-                                <label class="checkbox">
-                                    <input  style="margin-top:-4px" type="radio" name="selectedFilamentTrackerPlugin" value="FilamentManager Plugin" data-bind="checked: pluginSettings.selectedFilamentTrackerPlugin, enable:isFilamentManagerInstalled()"> FilamentManager-Plugin (Version 1.7.2+)
-                                </label>
-                                <label class="checkbox">
-                                    <input type="checkbox" data-bind="checked: pluginSettings.noNotificationTrackingPluginSelection" > Don't notify me again
-                                </label>
+                            Filament usage, spool assignment and material cost are provided by
+                            <a target="_newTab" href="https://github.com/Ajimaru/OctoPrint-SpoolManagerExtended">SpoolManagerExtended</a>
+                            (Status: <span data-bind="html:isSpoolManagerInstalledText"></span>)
+                        </label>
+                        <label class="checkbox">
+                            <input type="checkbox" data-bind="checked: pluginSettings.noNotificationTrackingPluginSelection" > Don't notify me again
                         </label>
                     </div>
                 </div>
                 <hr/>
-                <div>Fallback if CostEstimation-Plugin is not available. (Status: <span data-bind="html:isCostEstimationPluginAvailableText"></span>)</div>
                 <div class="control-group">
                     <label class="control-label">Currency symbol</label>
                     <div class="controls">
@@ -110,6 +92,80 @@
                     <label class="control-label">String format</label>
                     <div class="controls">
                         <input type="text" class="input-mini text-center" data-bind="value: pluginSettings.currencyFormat">
+                    </div>
+                </div>
+                <hr/>
+                <div><b>Printer running cost</b></div>
+                <div class="control-group">
+                    <label class="control-label">Purchase price</label>
+                    <div class="controls">
+                        <input type="text" class="input-mini text-center" data-bind="value: pluginSettings.printerPurchasePrice">
+                        <span class="help-inline">What the printer cost, in your currency.</span>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <label class="control-label">Expected lifespan</label>
+                    <div class="controls">
+                        <input type="text" class="input-mini text-center" data-bind="value: pluginSettings.printerLifespanHours">
+                        <span class="help-inline">Printing hours before the machine is written off.</span>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <label class="control-label">Maintenance per hour</label>
+                    <div class="controls">
+                        <input type="text" class="input-mini text-center" data-bind="value: pluginSettings.printerMaintenancePerHour">
+                        <span class="help-inline">Spare parts and servicing, spread over one printing hour.</span>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <label class="control-label">Wear multiplier</label>
+                    <div class="controls">
+                        <input type="text" class="input-mini text-center" data-bind="value: pluginSettings.printerWearMultiplier">
+                        <span class="help-inline">
+                            Scales depreciation and maintenance. Leave at <b>1.0</b>; raise it for heavy wear, e.g. abrasive filaments.
+                        </span>
+                    </div>
+                </div>
+                <hr/>
+                <div><b>Electricity</b> &mdash; measured through the
+                    <a target="_newTab" href="https://plugins.octoprint.org/plugins/tasmota/">Tasmota</a> plugin
+                    (Status: <span data-bind="html:isTasmotaInstalledText"></span>)
+                </div>
+                <div class="control-group">
+                    <label class="control-label">Printer's smart plug</label>
+                    <div class="controls">
+                        <select data-bind="options: tasmotaPlugs,
+                                           optionsText: 'label',
+                                           optionsValue: 'ip',
+                                           value: pluginSettings.tasmotaPlugIp,
+                                           optionsCaption: 'None',
+                                           enable: isTasmotaInstalled()"></select>
+                        <span class="help-inline">Which plug powers this printer. Tasmota does not know by itself.</span>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <label class="control-label">Plug channel (idx)</label>
+                    <div class="controls">
+                        <input type="text" class="input-mini text-center" data-bind="value: pluginSettings.tasmotaPlugIdx">
+                        <span class="help-inline">Relay channel, <b>1</b> for a single-relay plug.</span>
+                    </div>
+                </div>
+                <div class="control-group">
+                    <label class="control-label">Price per kWh</label>
+                    <div class="controls">
+                        <input type="text" class="input-mini text-center" data-bind="value: pluginSettings.electricityCostPerKwh">
+                    </div>
+                </div>
+                <div class="control-group">
+                    <div class="controls">
+                        <label class="checkbox">
+                            <input type="checkbox" data-bind="checked: pluginSettings.noNotificationTasmotaPolling" > Don't warn me about the Tasmota polling interval
+                        </label>
+                        <span class="help-block">
+                            Energy is only recorded while Tasmota polls the plug. Polling is off by default and runs
+                            every 5 minutes; a 1 minute interval is recommended, otherwise short prints record too few
+                            samples and their electricity cost stays empty.
+                        </span>
                     </div>
                 </div>
                 <hr/>
@@ -166,7 +222,7 @@
                             <input type="checkbox" data-bind="checked: pluginSettings.takePluginThumbnailAfterPrint" > Use thumbnail (if provided) after print, instead of camera snapshot
                         </label>
                         <div class="help-inline">
-                            Currently tested thumbnail plugins:
+                            Optional. Any plugin that stores a thumbnail with the file works; these are the tested ones:
                             <ul>
                                 <li>Cura Thumbnails (if uploaded in ufp format)</li>
                                 <li>PrusaSlicer Thumbnails </li>
@@ -211,14 +267,7 @@ M300 S440 P100 ;Playing a beep
             <!-- TEMPERATURE - TAB -->
             <div class="tab-pane" id="tab-pjhe-Temperature">
                 <div class="control-group">
-                    <div class="">
-                        <label class="checkbox">
-                            <input type="checkbox" data-bind="checked: pluginSettings.takeTemperatureFromPreHeatPlugin" > Take temperature values from PreHeat-Plugin (Status: <span data-bind="html:isPreHeatPluginAvailableText"></span>))
-                        </label>
-                    </div>
-                </div>
-                <div class="control-group">
-                    <label class="">Fallback: Read temperature from printer after print start with a delay of
+                    <label class="">Read temperature from printer after print start with a delay of
                         <span class="input">
                             <span class="input-append">
                                 <input type="number" step="1" min="0" class="input-mini text-right" data-bind="value: pluginSettings.delayReadingTemperatureFromPrinter">

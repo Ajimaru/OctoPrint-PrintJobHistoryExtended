@@ -42,6 +42,14 @@ function PrintJobHistoryExtendedAPIClient(pluginId, baseUrl) {
         return _addApiKeyIfNecessary("./plugin/" + this.pluginId + "/sampleCSV");
     }
 
+    this.getDatabaseBackupDownloadUrl = function(backupFileName){
+        return _addApiKeyIfNecessary("./plugin/" + this.pluginId + "/downloadDatabaseBackup/" + encodeURIComponent(backupFileName));
+    }
+
+    this.getDatabaseDumpExportUrl = function(){
+        return _addApiKeyIfNecessary("./plugin/" + this.pluginId + "/exportDatabaseDump");
+    }
+
     this.getExportUrl = function(exportType){
         return _addApiKeyIfNecessary("./plugin/" + this.pluginId + "/exportPrintJobHistory/" + exportType);
     }
@@ -172,6 +180,19 @@ function PrintJobHistoryExtendedAPIClient(pluginId, baseUrl) {
             dataType: "json",
             data: ko.toJSON(databaseSettings),
             contentType: "application/json; charset=UTF-8"
+        }).done(function( data ){
+            responseHandler(data)
+        }).fail(function(jqXHR){
+            if (errorHandler){
+                errorHandler(jqXHR)
+            }
+        });
+    }
+
+    this.callCreateDatabaseBackup = function(responseHandler, errorHandler){
+        $.ajax({
+            url: this.baseUrl + "plugin/"+this.pluginId+"/createDatabaseBackup",
+            type: "PUT"
         }).done(function( data ){
             responseHandler(data)
         }).fail(function(jqXHR){
