@@ -2121,7 +2121,7 @@ class PrintJobHistoryExtendedPlugin(
 # can be overwritten via __plugin_xyz__ control properties. See the documentation for that.
 # Name is used in the left Settings-Menue
 __plugin_name__ = "PrintJobHistoryExtended"
-__plugin_pythoncompat__ = ">=2.7,<4"
+__plugin_pythoncompat__ = ">=3.11,<3.15"
 
 def __plugin_load__():
 	global __plugin_implementation__
