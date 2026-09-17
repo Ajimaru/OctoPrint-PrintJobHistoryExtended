@@ -529,24 +529,30 @@ M300 S440 P100 ;Playing a beep
                 </div>
                 <hr/>
 
-<!--                <h4>Instance Name</h4>-->
-<!--                <div class="control-group" >-->
-<!--                    <label class="control-label" >OctoPrint Name</label>-->
-<!--                    <div class="controls">-->
-<!--                        <input type="text" class="input-block-level" >-->
-<!--                        <span class="help-block">The instance name is used to identified the print jobs in an external database. <br/>-->
-<!--                        <div class="alert">If you change this name, you can't read the print jobs from the dabase anymore. You need to manually replace the name in the external database. TODO implement renaming function.</div>-->
-<!--                        </span>-->
-<!--                    </div>-->
-<!--                </div>-->
+                <h4>Instance Name</h4>
+                <div class="control-group" >
+                    <label class="control-label" >OctoPrint Name</label>
+                    <div class="controls">
+                        <input type="text" class="input-block-level" data-bind="value: pluginSettings.instanceName">
+                        <span class="help-block">The instance name identifies the print jobs of this OctoPrint instance in a shared external database.<br/>
+                        <div class="alert">If you change this name, the print jobs already stored under the old name will no longer be shown for this instance. You would have to rename them manually in the database.</div>
+                        </span>
+                    </div>
+                </div>
+
+                <h4>Database Backend</h4>
+
+                <div class="controls">
+                    <label class="radio">
+                        <input type="radio" name="externalDatabaseGroup" data-bind="checked: pluginSettings.useExternal, checkedValue: false"> Use local SQLite3 database
+                    </label>
+                    <label class="radio">
+                        <input type="radio" name="externalDatabaseGroup" data-bind="checked: pluginSettings.useExternal, checkedValue: true"> Use external database
+                    </label>
+                    <span class="help-block">You need to save the settings before a change of the backend takes effect.</span>
+                </div>
 
                 <h4>Local SQLite3 Database</h4>
-
-<!--                <div class="controls">-->
-<!--                    <label class="radio">-->
-<!--                        <input type="radio" name="externalDatabaseGroup" value="false" data-bind="checked: pluginSettings.datbaseSettings.useExternal"> Use local SqLite3 database-->
-<!--                    </label>-->
-<!--                </div>-->
 
                 <div class="control-group">
                     <label class="control-label">Database file location</label>
@@ -554,14 +560,16 @@ M300 S440 P100 ;Playing a beep
                         <div class="input-append">
                             <input type="text" disabled class="input-xlarge text-right" data-bind="value: databaseFileLocation"/>
                             <a href="#" class="btn btn-danger" title="ReCreate Database" data-bind="click: deleteDatabaseAction"><i class="icon-trash"></i></a>
-                            <a href="#" class="btn btn-primary" title="Download Database" data-bind="attr: {href: downloadDatabaseUrl}" target="_blank"><i class="icon-download"></i></a>
+                            <a href="#" class="btn btn-primary" title="Download Database" data-bind="attr: {href: downloadDatabaseUrl}, visible: !pluginSettings.useExternal()" target="_blank"><i class="icon-download"></i></a>
                         </div>
+                        <span class="help-block" data-bind="visible: pluginSettings.useExternal()">An external database is in use. Back it up with the database server's own tools (e.g. <code>mysqldump</code>).</span>
                     </div>
                 </div>
                 <div class="control-group">
                     <label class="control-label">Snapshot file location</label>
                     <div class="controls">
                         <input type="text" disabled class="input-xlarge text-right" data-bind="value: snapshotFileLocation"/>
+                        <span class="help-block">Snapshot images are always stored as files on this OctoPrint instance. They are never stored in the database and are not shared with other instances.</span>
                     </div>
                 </div>
                 <div class="control-group">
@@ -570,59 +578,93 @@ M300 S440 P100 ;Playing a beep
                         e.g.<code>printJobHistoryExtended-backup-V2-20191207-0924.db</code>
                     </div>
                 </div>
-<!--                <div class="control-group">-->
-<!--                    <button class="btn btn-info pull-right" style="margin-right: 80px;">Test connection</button>-->
-<!--                </div>-->
 
+                <!-- EXTERNAL DATABASE -->
+                <div data-bind="visible: pluginSettings.useExternal()">
+                    <h4>External Database</h4>
 
-<!--
-                <h4>External Database</h4>
-                <div class="controls">
-                    <label class="radio">
-                        <input type="radio" name="externalDatabaseGroup" value="true" data-bind="checked: pluginSettings.datbaseSettings.useExternal"> Use external database
-                    </label>
-                </div>
+                    <div class="control-group">
+                        <label class="control-label">Type</label>
+                        <div class="controls">
+                            <select class="input-medium" data-bind="value: pluginSettings.databaseType">
+                                <option value="mysql">MySQL / MariaDB</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="control-group">
+                        <label class="control-label">Host</label>
+                        <div class="controls">
+                            <input type="text" placeholder="e.g. 127.0.0.1" data-bind="value: pluginSettings.databaseHost"/>
+                        </div>
+                    </div>
+                    <div class="control-group">
+                        <label class="control-label">Port</label>
+                        <div class="controls">
+                            <input type="text" placeholder="e.g. 3306" data-bind="value: pluginSettings.databasePort"/>
+                        </div>
+                    </div>
+                    <div class="control-group">
+                        <label class="control-label">Database Name</label>
+                        <div class="controls">
+                            <input type="text" placeholder="name of the existing, empty database" data-bind="value: pluginSettings.databaseName"/>
+                        </div>
+                    </div>
+                    <div class="control-group">
+                        <label class="control-label">User</label>
+                        <div class="controls">
+                            <input type="text" placeholder="database user" data-bind="value: pluginSettings.databaseUser"/>
+                        </div>
+                    </div>
+                    <div class="control-group">
+                        <label class="control-label">Password</label>
+                        <div class="controls">
+                            <input type="password" data-bind="value: pluginSettings.databasePassword"/>
+                        </div>
+                    </div>
 
-                <div class="control-group">
-                    <label class="control-label">Host</label>
-                    <div class="controls">
-                        <input type="text" data-bind="value: pluginSettings.datbaseSettings.host"/>
+                    <div class="control-group">
+                        <div class="controls">
+                            <button class="btn btn-info" data-bind="click: testDatabaseConnection, enable: !databaseBusy()">Test connection</button>
+                            <button class="btn" data-bind="click: copyDatabaseAction, enable: !databaseBusy()" title="Copy all print jobs from the local SQLite database to the external database">Copy local data to external database</button>
+                            <button class="btn btn-warning" data-bind="click: upgradeDatabaseSchemeAction, enable: !databaseBusy(), visible: databaseSchemeUpgradeNeeded()" title="Run the pending database scheme migration">Upgrade database scheme</button>
+                        </div>
+                    </div>
+                    <div class="control-group" data-bind="visible: databaseSchemeUpgradeNeeded()">
+                        <div class="controls">
+                            <div class="alert">The external database needs a scheme upgrade. It is not done automatically, because several OctoPrint instances may share this database. Make sure the other instances are not writing to it, then press "Upgrade database scheme".</div>
+                        </div>
                     </div>
                 </div>
+
                 <div class="control-group">
-                    <label class="control-label">Port</label>
                     <div class="controls">
-                        <input type="text" data-bind="value: pluginSettings.datbaseSettings.port"/>
-                    </div>
-                </div>
-                <div class="control-group">
-                    <label class="control-label">Database Name</label>
-                    <div class="controls">
-                        <input type="text" data-bind="value: pluginSettings.datbaseSettings.databaseName"/>
+                        <span data-bind="text: databaseConnectionTestResult, css: {'text-error': !databaseConnectionTestSuccess(), 'text-success': databaseConnectionTestSuccess()}"></span>
                     </div>
                 </div>
 
+                <h4>Database scheme</h4>
                 <div class="control-group">
-                    <label class="control-label">User</label>
                     <div class="controls">
-                        <input type="text" data-bind="value: pluginSettings.datbaseSettings.user"/>
+                        <table class="table table-condensed table-hover">
+                            <thead>
+                                <tr><th></th><th>Scheme version</th><th>Print jobs</th></tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>Local SQLite</td>
+                                    <td data-bind="text: databaseLocalSchemeVersion"></td>
+                                    <td data-bind="text: databaseLocalJobCount"></td>
+                                </tr>
+                                <tr data-bind="visible: pluginSettings.useExternal()">
+                                    <td>External</td>
+                                    <td data-bind="text: databaseExternalSchemeVersion"></td>
+                                    <td data-bind="text: databaseExternalJobCount"></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        <span class="help-block">Scheme version required by this plugin version: <span data-bind="text: databaseSchemeVersionFromPlugin"></span></span>
                     </div>
                 </div>
-                <div class="control-group">
-                    <label class="control-label">Password</label>
-                    <div class="controls">
-                        <input type="password" data-bind="value: pluginSettings.datbaseSettings.password"/>
-                    </div>
-                </div>
-                <div class="control-group">
-                    <span class="controls">
-                        <span>Success! Database Schemeversion: 3</span>
-                    </span>
-                    <button class="btn btn-info pull-right" style="margin-right: 80px;">Test connection</button>
-                </div>
-
-                <h4>Plugin V1.7.0 database scheme: #3</h4>
--->
 
             </div>
 

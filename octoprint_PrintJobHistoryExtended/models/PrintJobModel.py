@@ -15,19 +15,24 @@ class PrintJobModel(BaseModel):
 	userName = CharField(null=True)
 	fileOrigin = CharField(null=True)	#new since db-scheme2
 	fileName = CharField(null=True)
-	filePathName = CharField(null=True)
+	# TextField, because deep OctoPrint folder paths exceed the VARCHAR(255) a bare
+	# CharField maps to on MySQL. SQLite ignores the length, MySQL truncates or rejects.
+	filePathName = TextField(null=True)
 	fileSize = IntegerField(null=True)
 	printStartDateTime = DateTimeField(null=True)
 	printEndDateTime = DateTimeField(null=True)
 	duration = IntegerField(null=True)
 	printStatusResult = CharField(null=True)
-	noteText = CharField(null=True)
-	noteDeltaFormat = CharField(null=True)
-	noteHtml = CharField(null=True)
+	# The note fields hold Quill HTML/Delta documents. As CharField they would map to
+	# VARCHAR(255) on MySQL and silently lose content, so they are TextField.
+	noteText = TextField(null=True)
+	noteDeltaFormat = TextField(null=True)
+	noteHtml = TextField(null=True)
 	printedLayers = CharField(null=True)
 	printedHeight = CharField(null=True)
 	slicerSettingsAsText = TextField(null=True)
 	technicalLog = TextField(null=True)	#since v8
+	instanceName = CharField(null=True)	#since v9, identifies the OctoPrint instance in a shared database
 
 	allTemperatures = None
 

@@ -8,7 +8,7 @@ from peewee import CharField, Model, DecimalField, FloatField, DateField, DateTi
 
 class TemperatureModel(BaseModel):
 
-	printJob = ForeignKeyField(PrintJobModel, related_name='temperatures', on_delete='CASCADE')
+	printJob = ForeignKeyField(PrintJobModel, backref='temperatures', on_delete='CASCADE')
 
 	sensorName = CharField(null=False)
 	sensorValue = CharField(null=False)	# TODO needs to be refactored to float

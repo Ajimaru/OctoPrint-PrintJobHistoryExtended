@@ -102,10 +102,22 @@ class PrintJobHistoryExtendedPlugin(
 
 		self._logger.info("Start initializing")
 		# self.myInfoLogger("Start initializing")
+
+		# Drop the settings dict of an abandoned Postgres attempt. Changing the defaults does
+		# not remove it from an existing config.yaml, and it shipped hardcoded credentials that
+		# were served to every logged-in client through the settings API.
+		try:
+			self._settings.remove(["datbaseSettings"])
+		except Exception as e:
+			self._logger.warning("Could not remove obsolete 'datbaseSettings': " + str(e))
+
 		# DATABASE
 		sqlLoggingEnabled = self._settings.get_boolean([SettingsKeys.SETTINGS_KEY_SQL_LOGGING_ENABLED])
 		self._databaseManager = DatabaseManager(self._logger, sqlLoggingEnabled)
-		self._databaseManager.initDatabase(pluginDataBaseFolder, self._sendErrorMessageToClient)
+		self._databaseManager.setInstanceName(self._resolveInstanceName())
+		self._databaseManager.initDatabase(pluginDataBaseFolder,
+										   self._sendErrorMessageToClient,
+										   self._buildDatabaseSettingsFromPluginSettings())
 
 		# CAMERA
 		self._cameraManager = CameraManager(self._logger)
@@ -1431,13 +1443,72 @@ class PrintJobHistoryExtendedPlugin(
 		pass
 
 
+	def _buildDatabaseSettingsFromPluginSettings(self):
+		"""Read the flat database settings into a DatabaseSettings carrier."""
+		databaseSettings = DatabaseManager.DatabaseSettings()
+		databaseSettings.useExternal = self._settings.get_boolean([SettingsKeys.SETTINGS_KEY_DATABASE_USE_EXTERNAL])
+		databaseSettings.type = self._settings.get([SettingsKeys.SETTINGS_KEY_DATABASE_TYPE])
+		databaseSettings.host = self._settings.get([SettingsKeys.SETTINGS_KEY_DATABASE_HOST])
+		# The port has no default, so it can be empty/None until the user fills it in.
+		databasePort = self._settings.get_int([SettingsKeys.SETTINGS_KEY_DATABASE_PORT])
+		databaseSettings.port = databasePort if databasePort != None else 3306
+		databaseSettings.name = self._settings.get([SettingsKeys.SETTINGS_KEY_DATABASE_NAME])
+		databaseSettings.user = self._settings.get([SettingsKeys.SETTINGS_KEY_DATABASE_USER])
+		databaseSettings.password = self._settings.get([SettingsKeys.SETTINGS_KEY_DATABASE_PASSWORD])
+		return databaseSettings
+
+	def _resolveInstanceName(self):
+		"""Name identifying this OctoPrint instance in a shared database.
+
+		Derived from OctoPrint's own instance name (or the hostname) on first use and then
+		persisted: a name that keeps being re-derived would change with the hostname and
+		orphan this instance's print jobs.
+		"""
+		instanceName = self._settings.get([SettingsKeys.SETTINGS_KEY_INSTANCE_NAME])
+		if (StringUtils.isEmpty(instanceName) == False):
+			return instanceName
+
+		instanceName = self._settings.global_get(["appearance", "name"])
+		if (StringUtils.isEmpty(instanceName) == True):
+			import socket
+			instanceName = socket.gethostname()
+
+		self._settings.set([SettingsKeys.SETTINGS_KEY_INSTANCE_NAME], instanceName)
+		self._settings.save()
+		self._logger.info("Resolved instance name to '" + str(instanceName) + "'")
+		return instanceName
+
 	def on_settings_save(self, data):
+		databaseSettingsBefore = str(self._buildDatabaseSettingsFromPluginSettings())
+
 		# default save function
 		octoprint.plugin.SettingsPlugin.on_settings_save(self, data)
 
 		# reinitialize some fields
 		sqlLoggingEnabled = self._settings.get_boolean([SettingsKeys.SETTINGS_KEY_SQL_LOGGING_ENABLED])
 		self._databaseManager.showSQLLogging(sqlLoggingEnabled)
+
+		self._databaseManager.setInstanceName(self._settings.get([SettingsKeys.SETTINGS_KEY_INSTANCE_NAME]))
+
+		# Reconnect when the database configuration changed, so the user does not have to
+		# restart the server after entering the connection details.
+		newDatabaseSettings = self._buildDatabaseSettingsFromPluginSettings()
+		if (str(newDatabaseSettings) != databaseSettingsBefore):
+			self._logger.info("Database settings changed, reconnecting: " + str(newDatabaseSettings))
+			pluginDataBaseFolder = self.get_plugin_data_folder()
+			self._databaseManager.closeDatabase()
+			self._databaseManager.initDatabase(pluginDataBaseFolder,
+											   self._sendErrorMessageToClient,
+											   newDatabaseSettings)
+
+	def get_settings_restricted_paths(self):
+		# Without this the database password is part of the settings payload sent to every
+		# logged-in browser session.
+		return {
+			"admin": [
+				[SettingsKeys.SETTINGS_KEY_DATABASE_PASSWORD]
+			]
+		}
 
 
 
@@ -1496,15 +1567,17 @@ class PrintJobHistoryExtendedPlugin(
 		## Export / Import
 		settings[SettingsKeys.SETTINGS_KEY_IMPORT_CSV_MODE] = SettingsKeys.KEY_IMPORTCSV_MODE_APPEND
 
-		settings["datbaseSettings"] = {
-			"useExternal": "true",
-			"type": "postgres",
-			"host": "localhost",
-			"port": 5432,
-			"databaseName": "PrintJobDatabase",
-			"user": "Olli",
-			"password": "illO"
-		}
+		## Database backend
+		settings[SettingsKeys.SETTINGS_KEY_DATABASE_USE_EXTERNAL] = False
+		settings[SettingsKeys.SETTINGS_KEY_DATABASE_TYPE] = SettingsKeys.KEY_DATABASE_TYPE_SQLITE
+		# No defaults for host/port/name: a pre-filled value looks like a working configuration
+		# and hides which fields the user still has to supply.
+		settings[SettingsKeys.SETTINGS_KEY_DATABASE_HOST] = ""
+		settings[SettingsKeys.SETTINGS_KEY_DATABASE_PORT] = ""
+		settings[SettingsKeys.SETTINGS_KEY_DATABASE_NAME] = ""
+		settings[SettingsKeys.SETTINGS_KEY_DATABASE_USER] = ""
+		settings[SettingsKeys.SETTINGS_KEY_DATABASE_PASSWORD] = ""
+		settings[SettingsKeys.SETTINGS_KEY_INSTANCE_NAME] = ""
 
 		## Debugging
 		settings[SettingsKeys.SETTINGS_KEY_SQL_LOGGING_ENABLED] = False

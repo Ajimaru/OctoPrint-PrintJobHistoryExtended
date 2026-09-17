@@ -28,6 +28,32 @@
         </div>
     </div>
 
+    <!-- Copy-Database-Confirmation-Dialog -->
+    <div id="dialog_printJobHistoryExtended_copyDatabase" class="modal hide fade">
+        <div class="modal-header">
+            <h3 class="modal-title">Copy print jobs to the external database</h3>
+        </div>
+        <div class="modal-body">
+            <p>Copy all print jobs from the local SQLite database to the external database?</p>
+
+            <p>The print jobs already stored in the external database are <b>kept</b>. The jobs of this
+               instance are added to them, so several OctoPrint instances can share one database.</p>
+
+            <div class="alert">
+                Snapshot images stay on this OctoPrint instance and are <b>not</b> copied. Print jobs
+                of other instances are therefore shown without an image.
+            </div>
+
+            <div data-bind="visible: databaseBusy">
+                <i class="fa fa-spinner fa-spin"></i> Copying...
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn" data-bind="disable: databaseBusy, click: cancelCopyDatabaseAction">Cancel</button>
+            <button class="btn btn-primary" data-bind="disable: databaseBusy, click: confirmCopyDatabaseAction">Copy print jobs</button>
+        </div>
+    </div>
+
     <!-- CSV Import Status-Dialog -->
     <div id="dialog_printJobHistoryExtended_csvImportStatus" class="modal hide fade">
         <div class="modal-header">

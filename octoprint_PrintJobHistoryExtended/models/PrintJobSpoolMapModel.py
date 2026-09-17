@@ -9,6 +9,6 @@ from peewee import CharField, Model, DecimalField, FloatField, DateField, DateTi
 
 class PrintJobSpoolMapModel(BaseModel):
 
-	printJob = ForeignKeyField(PrintJobModel, related_name='spoolMap', on_delete='CASCADE')
+	printJob = ForeignKeyField(PrintJobModel, backref='spoolMap', on_delete='CASCADE')
 
 	spoolManagerId = IntegerField()

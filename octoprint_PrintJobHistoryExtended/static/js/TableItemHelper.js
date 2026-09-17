@@ -26,6 +26,8 @@
     // Filterinng
     self.filterOptions = ["all", "onlySuccess", "onlyFailed"];
     self.selectedFilterName = ko.observable(defaultFilterName);
+    // Instance filter, only meaningful when several OctoPrint instances share one database
+    self.selectedInstanceName = ko.observable("all");
     // Date
     self.queryStartDate = ko.observable(null);
     self.queryEndDate = ko.observable(null);
@@ -74,6 +76,7 @@
             "startDate": self.queryStartDate() == null ? "" : self.queryStartDate(),
             "endDate": self.queryEndDate() == null ? "" : self.queryEndDate(),
             "searchQuery": self.searchQuery() == null ? "" : self.searchQuery(),
+            "instanceName": self.selectedInstanceName() == null ? "all" : self.selectedInstanceName(),
         };
         return tableQuery;
     }
@@ -153,6 +156,16 @@
 
     self.isFilterSelected = function(filterName) {
         return self.selectedFilterName() == filterName;
+    };
+
+    self.changeInstanceFilter = function(newInstanceName) {
+        self.selectedInstanceName(newInstanceName)
+        self.currentPage(0);
+        self._loadItems();
+    };
+
+    self.isInstanceFilterSelected = function(instanceName) {
+        return self.selectedInstanceName() == instanceName;
     };
 
 

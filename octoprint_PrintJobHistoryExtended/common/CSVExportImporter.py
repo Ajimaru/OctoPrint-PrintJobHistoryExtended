@@ -14,6 +14,7 @@ from octoprint_PrintJobHistoryExtended.common import StringUtils
 FORMAT_DATETIME = "%d.%m.%Y %H:%M"
 FORMAT_DATE = "%d.%m.%Y"
 
+COLUMN_INSTANCE = "Instance"
 COLUMN_USER = "User"
 COLUMN_PRINT_RESULT = "Print result [success canceled failed]"
 COLUMN_START_DATETIME = "Start Datetime [dd.mm.yyyy hh:mm]"
@@ -372,6 +373,7 @@ class CostsCSVFormattorParser:
 ######################################################################################################################
 ## CSV HEADER-ORDER
 ALL_COLUMNS_SORTED = [
+	COLUMN_INSTANCE,
 	COLUMN_USER,
 	COLUMN_PRINT_RESULT,
 	COLUMN_START_DATETIME,
@@ -401,6 +403,7 @@ ALL_COLUMNS_SORTED = [
 
 ## ALL COLUMNS WITH THERE PARSER/EXPORTER
 ALL_COLUMNS = {
+	COLUMN_INSTANCE: CSVColumn("instanceName", COLUMN_INSTANCE, "", DefaultCSVFormattorParser()),
 	COLUMN_USER: CSVColumn("userName", COLUMN_USER, "", DefaultCSVFormattorParser()),
 	COLUMN_PRINT_RESULT: CSVColumn("printStatusResult", COLUMN_PRINT_RESULT, "", PrintStatusCSVFormattorParser()),
 	COLUMN_START_DATETIME: CSVColumn("printStartDateTime", COLUMN_START_DATETIME, "", DateTimeCSVFormattorParser()),
