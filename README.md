@@ -1,8 +1,8 @@
-# OctoPrint-PrintJobHistory
+# OctoPrint-PrintJobHistoryExtended
 
-[![Version](https://img.shields.io/badge/dynamic/json.svg?color=brightgreen&label=version&url=https://api.github.com/repos/vojtakaniok/OctoPrint-PrintJobHistory/releases&query=$[0].name)]()
-[![Released](https://img.shields.io/badge/dynamic/json.svg?color=brightgreen&label=released&url=https://api.github.com/repos/vojtakaniok/OctoPrint-PrintJobHistory/releases&query=$[0].published_at)]()
-![GitHub Releases (by Release)](https://img.shields.io/github/downloads/vojtakaniok/OctoPrint-PrintJobHistory/latest/total.svg)
+[![Version](https://img.shields.io/badge/dynamic/json.svg?color=brightgreen&label=version&url=https://api.github.com/repos/Ajimaru/OctoPrint-PrintJobHistoryExtended/releases&query=$[0].name)]()
+[![Released](https://img.shields.io/badge/dynamic/json.svg?color=brightgreen&label=released&url=https://api.github.com/repos/Ajimaru/OctoPrint-PrintJobHistoryExtended/releases&query=$[0].published_at)]()
+![GitHub Releases (by Release)](https://img.shields.io/github/downloads/Ajimaru/OctoPrint-PrintJobHistoryExtended/latest/total.svg)
 
 The OctoPrint-Plugin stores all print-job information of a print in a local database.
 This information is collected from OctoPrint itself, but also from other plugins. See [below](#Optional-Plugins) for more information about these plugins.
@@ -27,7 +27,7 @@ If you would like to support these new efforts, please consider buying me a coff
 - [x] Used/Calculated length
 - [x] Used weight
 - [x] Filament cost
-- [x] Slicer Settings (look [here](https://github.com/vojtakaniok/OctoPrint-PrintJobHistory/wiki/Slicer-Settings) for "how to use it")
+- [x] Slicer Settings (look [here](https://github.com/Ajimaru/OctoPrint-PrintJobHistoryExtended/wiki/Slicer-Settings) for "how to use it")
 - [x] Export all data from PrintHistory-Plugin as CSV
 
 ### UI features
@@ -77,7 +77,7 @@ If you would like to support these new efforts, please consider buying me a coff
 Install via the bundled [Plugin Manager](http://docs.octoprint.org/en/master/bundledplugins/pluginmanager.html)
 or manually using this URL:
 
-    https://github.com/vojtakaniok/OctoPrint-PrintJobHistory/releases/latest/download/main.zip
+    https://github.com/Ajimaru/OctoPrint-PrintJobHistoryExtended/releases/latest/download/main.zip
 
 After installation, you can listen on three release channels (since 1.6.0).
 What does this mean: Each channel has its own release-version and each release has a different kind of functionality and stability.
@@ -99,10 +99,10 @@ At the meantime you need to uninstall and install the version you like from the 
 
 ## Roadmap
 
-TBD. Critical bug fixes for starters. Submit issues to the repo [here](https://github.com/vojtakaniok/OctoPrint-PrintJobHistory/issues).
+TBD. Critical bug fixes for starters. Submit issues to the repo [here](https://github.com/Ajimaru/OctoPrint-PrintJobHistoryExtended/issues).
 
 ## Versions
 
-see [Release-Overview](https://github.com/vojtakaniok/OctoPrint-PrintJobHistory/releases/)
+see [Release-Overview](https://github.com/Ajimaru/OctoPrint-PrintJobHistoryExtended/releases/)
 
 
