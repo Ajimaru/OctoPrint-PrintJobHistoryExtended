@@ -59,7 +59,7 @@ jobs:
             - #xxx
 
             ## Counter
-            ![downloaded](https://img.shields.io/github/downloads/vojtakaniok/${{ steps.branch.outputs.repo_name }}/${{ steps.version.outputs.version }}/total)
+            ![downloaded](https://img.shields.io/github/downloads/Ajimaru/${{ steps.branch.outputs.repo_name }}/${{ steps.version.outputs.version }}/total)
 
             ## *NOTE: this plugin has been abandoned by the original creator and adopted here by a new maintainer*
 
@@ -81,6 +81,6 @@ jobs:
           asset_content_type: application/gzip
 
       - name: download main.zip
-        run: curl -O -J -L -v https://github.com/vojtakaniok/${{ steps.branch.outputs.repo_name }}/releases/download/${{ steps.version.outputs.version }}/main.zip
+        run: curl -O -J -L -v https://github.com/Ajimaru/${{ steps.branch.outputs.repo_name }}/releases/download/${{ steps.version.outputs.version }}/main.zip
 
       - run: echo "🍏 This job's status is ${{ job.status }}."
