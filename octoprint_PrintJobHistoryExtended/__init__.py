@@ -1240,6 +1240,20 @@ class PrintJobHistoryExtendedPlugin(
 			if (printStatus == "success"):
 				captureThePrint = True
 
+		# Acknowledging an error on the printer makes some connectors report a start and a
+		# done within a few seconds. That is indistinguishable from a real print here, so it
+		# used to be stored as a successful one - complete with the after-print dialog.
+		# Filtering on duration is the only signal that separates the two.
+		if (captureThePrint == True):
+			minimumDuration = StringUtils.transformToFloatOrNone(
+				self._settings.get([SettingsKeys.SETTINGS_KEY_MINIMUM_PRINT_DURATION_IN_SECONDS]))
+			if (minimumDuration != None and minimumDuration > 0 and self._currentPrintJobModel != None
+				and self._currentPrintJobModel.printStartDateTime != None):
+				durationInSeconds = (datetime.datetime.now() - self._currentPrintJobModel.printStartDateTime).total_seconds()
+				if (durationInSeconds < minimumDuration):
+					self._logger.info("PrintJob not captured, because it only lasted '" + str(round(durationInSeconds, 1)) + "' seconds (minimum is '" + str(minimumDuration) + "')")
+					captureThePrint = False
+
 		databaseId = None
 		payLoadForClient = None
 		# capture the print
@@ -1736,6 +1750,7 @@ class PrintJobHistoryExtendedPlugin(
 		settings[SettingsKeys.SETTINGS_KEY_SHOW_PRINTJOB_DIALOG_AFTER_PRINT_JOB_ID] = None
 		settings[SettingsKeys.SETTINGS_KEY_SHOWPRINTJOBDIALOGAFTERPRINT_MODE] = SettingsKeys.KEY_SHOWPRINTJOBDIALOGAFTERPRINT_MODE_SUCCESSFUL
 		settings[SettingsKeys.SETTINGS_KEY_CAPTURE_PRINTJOBHISTORY_MODE] = SettingsKeys.KEY_CAPTURE_PRINTJOBHISTORY_MODE_SUCCESSFUL
+		settings[SettingsKeys.SETTINGS_KEY_MINIMUM_PRINT_DURATION_IN_SECONDS] = 30
 		# settings[SettingsKeys.SETTINGS_KEY_SELECTED_FILAMENTTRACKER_PLUGIN] = SettingsKeys.KEY_SELECTED_SPOOLMANAGER_PLUGIN
 		settings[SettingsKeys.SETTINGS_KEY_SELECTED_FILAMENTTRACKER_PLUGIN] = SettingsKeys.KEY_SELECTED_NONE_PLUGIN
 		settings[SettingsKeys.SETTINGS_KEY_NO_NOTIFICATION_FILAMENTTRACKERING_PLUGIN_SELECTION] = False

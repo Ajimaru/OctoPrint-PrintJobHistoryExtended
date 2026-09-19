@@ -50,6 +50,16 @@
                         </label>
                     </div>
                 </div>
+                <div class="control-group">
+                    <label class="control-label">Ignore prints shorter than</label>
+                    <div class="controls">
+                        <input type="text" class="input-mini text-center" data-bind="value: pluginSettings.minimumPrintDurationInSeconds"> seconds
+                        <span class="help-inline">
+                            Acknowledging an error on the printer can look like a print of a few
+                            seconds. <b>0</b> records every print.
+                        </span>
+                    </div>
+                </div>
                 <hr/>
                 <div class="control-group">
                     <div class="controls">
