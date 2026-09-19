@@ -393,10 +393,10 @@ $(function() {
 
         self.isPrintHistoryPluginAvailable = ko.observable(false);
         self.isSpoolManagerInstalled = ko.observable(false);
-        self.isSpoolmanInstalled = ko.observable(false);
-        self.isFilamentManagerInstalled = ko.observable(false);
-
-        self.isPreHeatPluginAvailableText = ko.observable("unknown");
+        self.isSpoolManagerInstalledText = ko.observable("unknown");
+        self.isTasmotaInstalled = ko.observable(false);
+        self.isTasmotaInstalledText = ko.observable("unknown");
+        self.tasmotaPlugs = ko.observableArray([]);
 
         self.databaseFileLocation = ko.observable();
         self.snapshotFileLocation = ko.observable();
@@ -413,7 +413,6 @@ $(function() {
         self.databaseSchemeUpgradeNeeded = ko.observable(false);
         self.knownInstanceNames = ko.observableArray([]);
 
-        self.isCostEstimationPluginAvailableText = ko.observable("unknown");
         self.currencySymbol = ko.observable();
         self.currencyFormat = ko.observable();
 
@@ -536,7 +535,9 @@ $(function() {
             };
         };
 
-        self.handleDatabaseMetaDataResponse = function(metaData) {
+        // reportOutcome is false when the metadata is just being refreshed in the background,
+        // so opening the settings does not leave a "Connection successful." the user never asked for.
+        self.handleDatabaseMetaDataResponse = function(metaData, reportOutcome) {
             self.databaseBusy(false);
             if (metaData == null){
                 return;
@@ -548,6 +549,15 @@ $(function() {
             self.databaseExternalJobCount(metaData.externalJobCount == null ? "-" : metaData.externalJobCount);
             self.databaseSchemeUpgradeNeeded(metaData.schemeUpgradeNeeded == true);
 
+            if (reportOutcome == false){
+                // A failure still has to surface - it explains why the numbers above are empty.
+                if (metaData.success != true){
+                    self.databaseConnectionTestSuccess(false);
+                    self.databaseConnectionTestResult("Connection failed: " + metaData.errorMessage);
+                }
+                return;
+            }
+
             self.databaseConnectionTestSuccess(metaData.success == true);
             if (metaData.success == true){
                 self.databaseConnectionTestResult("Connection successful.");
@@ -558,7 +568,7 @@ $(function() {
 
         self.loadDatabaseMetaData = function() {
             self.apiClient.callLoadDatabaseMetaData(function(responseData) {
-                self.handleDatabaseMetaDataResponse(responseData.metadata);
+                self.handleDatabaseMetaDataResponse(responseData.metadata, false);
             });
         };
 
@@ -568,7 +578,7 @@ $(function() {
             self.apiClient.callTestDatabaseConnection(
                 self.buildDatabaseSettings(),
                 function(responseData) {
-                    self.handleDatabaseMetaDataResponse(responseData.metadata);
+                    self.handleDatabaseMetaDataResponse(responseData.metadata, true);
                 },
                 function(jqXHR) {
                     self.databaseBusy(false);
@@ -619,26 +629,99 @@ $(function() {
             );
         };
 
+        // Downloads a URL as a file, rejecting on a failed or empty download.
+        self.downloadBackupFile = function(url, downloadFileName) {
+            return fetch(url)
+                .then(function(response) {
+                    if (response.ok == false){
+                        return response.text().then(function(text) {
+                            throw new Error(text || "Backup download failed (HTTP " + response.status + ")");
+                        });
+                    }
+                    return response.blob();
+                })
+                .then(function(blob) {
+                    if (blob == null || blob.size == 0){
+                        throw new Error("Backup download failed (empty file), upgrade aborted.");
+                    }
+                    var link = document.createElement("a");
+                    link.href = URL.createObjectURL(blob);
+                    link.download = downloadFileName;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    URL.revokeObjectURL(link.href);
+                });
+        };
+
+        // A scheme upgrade rewrites the database in place, so the backup is downloaded FIRST and
+        // the migration only starts once it is safely on disk.
         self.upgradeDatabaseSchemeAction = function() {
             self.databaseBusy(true);
-            self.apiClient.callUpgradeDatabaseScheme(
-                function(responseData) {
-                    self.databaseBusy(false);
-                    var metaData = responseData.metadata;
-                    if (metaData.success == true){
-                        self.databaseConnectionTestSuccess(true);
-                        self.databaseConnectionTestResult("Database scheme upgraded to version " + metaData.schemeVersion + ".");
-                        self.databaseSchemeUpgradeNeeded(false);
-                        self.loadDatabaseMetaData();
-                    } else {
-                        self.databaseConnectionTestSuccess(false);
-                        self.databaseConnectionTestResult("Upgrade failed: " + metaData.errorMessage);
+
+            var handleUpgradeResponse = function(responseData) {
+                self.databaseBusy(false);
+                var metaData = responseData.metadata;
+                if (metaData.success == true){
+                    self.databaseConnectionTestSuccess(true);
+                    self.databaseConnectionTestResult("Database scheme upgraded to version " + metaData.schemeVersion + ".");
+                    self.databaseSchemeUpgradeNeeded(false);
+                    self.loadDatabaseMetaData();
+                } else {
+                    self.databaseConnectionTestSuccess(false);
+                    self.databaseConnectionTestResult("Upgrade failed: " + metaData.errorMessage);
+                }
+            };
+
+            var handleUpgradeFailure = function(jqXHR) {
+                self.databaseBusy(false);
+                self.databaseConnectionTestSuccess(false);
+                self.databaseConnectionTestResult("Upgrade failed. See OctoPrint.log for details.");
+            };
+
+            var abortWithBackupError = function(error) {
+                self.databaseBusy(false);
+                self.databaseConnectionTestSuccess(false);
+                self.databaseConnectionTestResult(
+                    "Backup before upgrade failed, upgrade aborted: " +
+                    (error != null && error.message ? error.message : error));
+            };
+
+            self.databaseConnectionTestResult("Creating backup before upgrade...");
+
+            if (self.pluginSettings.useExternal() == true){
+                var now = new Date();
+                var pad = function(value) { return (value < 10 ? "0" : "") + value; };
+                var dumpFileName = "printJobHistoryExtended-mysql-backup-" + now.getFullYear()
+                    + pad(now.getMonth() + 1) + pad(now.getDate()) + "-"
+                    + pad(now.getHours()) + pad(now.getMinutes()) + ".sql";
+
+                self.downloadBackupFile(self.apiClient.getDatabaseDumpExportUrl(), dumpFileName)
+                    .then(function() {
+                        self.apiClient.callUpgradeDatabaseScheme(handleUpgradeResponse, handleUpgradeFailure);
+                    })
+                    .catch(abortWithBackupError);
+                return;
+            }
+
+            self.apiClient.callCreateDatabaseBackup(
+                function(backupResponse) {
+                    if (backupResponse == null || backupResponse.success != true){
+                        abortWithBackupError(new Error(
+                            backupResponse != null && backupResponse.errorMessage
+                                ? backupResponse.errorMessage
+                                : "Could not create the database backup."));
+                        return;
                     }
+                    var backupFileName = backupResponse.backupFileName;
+                    self.downloadBackupFile(self.apiClient.getDatabaseBackupDownloadUrl(backupFileName), backupFileName)
+                        .then(function() {
+                            self.apiClient.callUpgradeDatabaseScheme(handleUpgradeResponse, handleUpgradeFailure);
+                        })
+                        .catch(abortWithBackupError);
                 },
                 function(jqXHR) {
-                    self.databaseBusy(false);
-                    self.databaseConnectionTestSuccess(false);
-                    self.databaseConnectionTestResult("Upgrade failed. See OctoPrint.log for details.");
+                    abortWithBackupError(new Error("Could not create the database backup."));
                 }
             );
         };
@@ -906,18 +989,18 @@ $(function() {
                 self.snapshotFileLocation(data.snapshotFileLocation);
                 self.isPrintHistoryPluginAvailable(data.isPrintHistoryPluginAvailable);
                 self.isSpoolManagerInstalled(data.isSpoolManagerInstalled);
-                self.isSpoolmanInstalled(data.isSpoolmanInstalled);
-                self.isFilamentManagerInstalled(data.isFilamentManagerInstalled);
+                self.isTasmotaInstalled(data.isTasmotaInstalled);
+                self.tasmotaPlugs(data.tasmotaPlugs != null ? data.tasmotaPlugs : []);
 
-                if (data.isCostEstimationPluginAvailable == true){
-                    self.isCostEstimationPluginAvailableText("<span style='color:green'>available</span>");
+                if (data.isSpoolManagerInstalled == true){
+                    self.isSpoolManagerInstalledText("<span style='color:green'>available</span>");
                 } else {
-                    self.isCostEstimationPluginAvailableText("<span style='color:red'>not available</span>");
+                    self.isSpoolManagerInstalledText("<span style='color:red'>not available</span>");
                 }
-                if (data.isPreHeatPluginAvailable == true){
-                    self.isPreHeatPluginAvailableText("<span style='color:green'>available</span>");
+                if (data.isTasmotaInstalled == true){
+                    self.isTasmotaInstalledText("<span style='color:green'>available</span>");
                 } else {
-                    self.isPreHeatPluginAvailableText("<span style='color:red'>not available</span>");
+                    self.isTasmotaInstalledText("<span style='color:red'>not available</span>");
                 }
                 self.currencySymbol(data.currencySymbol);
                 self.currencyFormat(data.currencyFormat);

@@ -3,16 +3,18 @@ from __future__ import absolute_import
 
 class SettingsKeys():
 
-	# All dependent P3rd Party Plugins
-	PLUGIN_PREHEAT = { "key": "preheat", "minVersion": "0.4.0"}
-	PLUGIN_FILAMENT_MANAGER = { "key": "filamentmanager", "minVersion": "1.7.2"}
+	# Filament, spool assignment and material cost all come from this one plugin.
+	PLUGIN_SPOOL_MANAGER = { "key": "SpoolManagerExtended", "minVersion": "2.0.0a1"}
+	# Measured electricity data. Read straight from its SQLite file, so no version floor applies.
+	PLUGIN_TASMOTA = { "key": "tasmota", "minVersion": None}
+	# Optional extras: used when present, never nagged about.
 	PLUGIN_DISPLAY_LAYER_PROGRESS = { "key": "DisplayLayerProgress", "minVersion": "1.26.0"}
-	PLUGIN_SPOOL_MANAGER = { "key": "SpoolManager", "minVersion": "1.4.2"}
-	PLUGIN_SPOOLMAN = { "key": "Spoolman", "minVersion": "1.3.0"}
 	PLUGIN_ULTIMAKER_FORMAT_PACKAGE = { "key": "UltimakerFormatPackage", "minVersion": "1.0.0"}
 	PLUGIN_PRUSA_SLICER_THUMNAIL = { "key": "prusaslicerthumbnails", "minVersion": "1.0.0"}
-	PLUGIN_COST_ESTIMATION = { "key": "costestimation", "minVersion": "3.4.0"}
+	# Legacy import source only.
 	PLUGIN_PRINT_HISTORY = { "key": "printhistory", "minVersion": None}
+	# Kept solely to import its settings once; see SETTINGS_KEY_COSTESTIMATION_IMPORTED.
+	PLUGIN_COST_ESTIMATION = { "key": "costestimation", "minVersion": None}
 
 	## General
 	SETTINGS_KEY_PLUGIN_DEPENDENCY_CHECK = "pluginCheckActivated"
@@ -29,16 +31,34 @@ class SettingsKeys():
 	KEY_CAPTURE_PRINTJOBHISTORY_MODE_ALWAYS = "always"
 	KEY_CAPTURE_PRINTJOBHISTORY_MODE_SUCCESSFUL = "successful"
 
+	# Filament tracking is no longer a choice between plugins, it is simply on when
+	# SpoolManagerExtended is present. The setting survives only to migrate old configs.
 	SETTINGS_KEY_SELECTED_FILAMENTTRACKER_PLUGIN = "selectedFilamentTrackerPlugin"
-	KEY_SELECTED_SPOOLMANAGER_PLUGIN = "SpoolManager Plugin"	# visible inn plugin-settings
-	KEY_SELECTED_SPOOLMAN_PLUGIN = "Spoolman Plugin"	# visible inn plugin-settings
-	KEY_SELECTED_FILAMENTMANAGER_PLUGIN = "FilamentManager Plugin"	# visible inn plugin-settings
+	KEY_SELECTED_SPOOLMANAGER_PLUGIN = "SpoolManagerExtended"
 	KEY_SELECTED_NONE_PLUGIN = "none"
+	# Values written by earlier releases, only ever read during migration.
+	LEGACY_KEY_SELECTED_SPOOLMANAGER_PLUGIN = "SpoolManager Plugin"
+	LEGACY_KEY_SELECTED_SPOOLMAN_PLUGIN = "Spoolman Plugin"
+	LEGACY_KEY_SELECTED_FILAMENTMANAGER_PLUGIN = "FilamentManager Plugin"
 	SETTINGS_KEY_NO_NOTIFICATION_FILAMENTTRACKERING_PLUGIN_SELECTION = "noNotificationTrackingPluginSelection"
 
 
 	SETTINGS_KEY_CURRENCY_SYMBOL = "currencySymbol"
 	SETTINGS_KEY_CURRENCY_FORMAT = "currencyFormat"
+
+	## Printer running cost. Owned by this plugin since 1.18; previously read out of
+	## the CostEstimation plugin's settings.
+	SETTINGS_KEY_PRINTER_PURCHASE_PRICE = "printerPurchasePrice"
+	SETTINGS_KEY_PRINTER_LIFESPAN_HOURS = "printerLifespanHours"
+	SETTINGS_KEY_PRINTER_MAINTENANCE_PER_HOUR = "printerMaintenancePerHour"
+	SETTINGS_KEY_PRINTER_WEAR_MULTIPLIER = "printerWearMultiplier"
+	SETTINGS_KEY_COSTESTIMATION_IMPORTED = "costEstimationSettingsImported"
+
+	## Electricity, measured through the Tasmota plugin's energy database
+	SETTINGS_KEY_TASMOTA_PLUG_IP = "tasmotaPlugIp"
+	SETTINGS_KEY_TASMOTA_PLUG_IDX = "tasmotaPlugIdx"
+	SETTINGS_KEY_ELECTRICITY_COST_PER_KWH = "electricityCostPerKwh"
+	SETTINGS_KEY_NO_NOTIFICATION_TASMOTA_POLLING = "noNotificationTasmotaPolling"
 
 	SETTINGS_KEY_SLICERSETTINGS_KEYVALUE_EXPRESSION = "slicerSettingsKeyValueExpression"
 	SETTINGS_KEY_SINGLE_PRINTJOB_REPORT_TEMPLATENAME = "singlePrintJobTemplateName"
@@ -58,7 +78,6 @@ class SettingsKeys():
 
 	# Temperatrue
 	SETTINGS_KEY_DEFAULT_TOOL_ID = "defaultTemperatureToolId"
-	SETTINGS_KEY_TAKE_TEMPERATURE_FROM_PREHEAT = "takeTemperatureFromPreHeatPlugin"
 	SETTINGS_KEY_DELAY_READING_TEMPERATURE_FROM_PRINTER = "delayReadingTemperatureFromPrinter"
 
 	## Export / Import

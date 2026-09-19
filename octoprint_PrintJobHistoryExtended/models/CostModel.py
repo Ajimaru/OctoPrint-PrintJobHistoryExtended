@@ -31,3 +31,9 @@ class CostModel(BaseModel):
 	otherCostLabel = TextField(null=True)
 	otherCost = FloatField(null=True)
 	withDefaultSpoolValues = BooleanField(null=True)
+
+	# Since V10
+	# Energy measured for this job, and where the electricity figure came from ("tasmota"
+	# or "none"). Kept alongside the cost so a later change of the kWh price stays traceable.
+	electricityKwh = FloatField(null=True)
+	costSource = CharField(null=True)

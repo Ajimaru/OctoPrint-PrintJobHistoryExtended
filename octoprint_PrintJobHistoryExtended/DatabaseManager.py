@@ -31,7 +31,7 @@ from playhouse.shortcuts import model_to_dict
 FORCE_CREATE_TABLES = False
 SQL_LOGGING = False
 
-CURRENT_DATABASE_SCHEME_VERSION = 9
+CURRENT_DATABASE_SCHEME_VERSION = 10
 
 # Scheme versions below this one can only be migrated on a local SQLite database, because the
 # migration scripts for 1..8 are raw sqlite3 scripts (PRAGMA, single-quoted identifiers, the
@@ -180,6 +180,86 @@ class DatabaseManager(object):
 			self._logger.exception(e)
 		return result
 
+	# Creates a .db copy of the local SQLite database WITHOUT migrating it, so the frontend can
+	# download the backup BEFORE the scheme upgrade runs.
+	def createLocalDatabaseBackup(self):
+		result = {"success": False, "backupFileName": None, "errorMessage": None}
+		if (self._databaseSettings.useExternal == True):
+			result["errorMessage"] = "A database file backup is only available for the local SQLite database."
+			return result
+		try:
+			backupFilePath = self.backupDatabaseFile(os.path.dirname(self._databaseFileLocation))
+			if (backupFilePath == None):
+				result["errorMessage"] = "Could not create the database file backup (no database file found)."
+				return result
+			result["backupFileName"] = os.path.basename(backupFilePath)
+			result["success"] = True
+		except Exception as e:
+			self._logger.exception("createLocalDatabaseBackup")
+			result["errorMessage"] = str(e)
+		return result
+
+	# Plain-SQL dump of the external MySQL database, so no mysqldump binary is required on the host.
+	def exportMySQLDatabaseDump(self):
+		if (self._databaseSettings.useExternal == False or
+			self._databaseSettings.type != SettingsKeys.KEY_DATABASE_TYPE_MYSQL):
+			return {
+				"success": False,
+				"dump": None,
+				"errorMessage": "Database dump export is only supported for external MySQL databases."
+			}
+		try:
+			if (self.connectToDatabase() == False):
+				return {"success": False, "dump": None,
+						"errorMessage": "Could not connect to the external MySQL database."}
+			return {"success": True, "dump": self._generateMySQLDumpText(), "errorMessage": None}
+		except Exception as e:
+			self._logger.exception("exportMySQLDatabaseDump")
+			return {"success": False, "dump": None, "errorMessage": str(e)}
+
+	def _generateMySQLDumpText(self):
+		# raw connection, needed for proper SQL value escaping
+		rawConnection = self._database.connection()
+
+		schemeVersion = str(CURRENT_DATABASE_SCHEME_VERSION)
+		try:
+			schemeVersion = str(PluginMetaDataModel.get(
+				PluginMetaDataModel.key == PluginMetaDataModel.KEY_DATABASE_SCHEME_VERSION).value)
+		except Exception:
+			self._logger.warning("Could not read the database scheme version for the dump header, using default.")
+
+		now = datetime.datetime.now()
+		dumpLines = [
+			"-- PrintJobHistoryExtended MySQL dump",
+			"-- schemeVersion: " + schemeVersion,
+			"-- database: " + str(self._databaseSettings.name),
+			"-- exportDate: " + now.strftime("%Y-%m-%d %H:%M:%S"),
+			"",
+			"SET NAMES utf8mb4;",
+			""
+		]
+
+		for model in MODELS:
+			tableName = self._assertSafeSQLIdentifier(model._meta.table_name)
+
+			dumpLines.append("DROP TABLE IF EXISTS `" + tableName + "`;")
+
+			cursor = self._database.execute_sql("SHOW CREATE TABLE `" + tableName + "`")
+			dumpLines.append(cursor.fetchone()[1] + ";")
+			dumpLines.append("")
+
+			cursor = self._database.execute_sql("SHOW COLUMNS FROM `" + tableName + "`")
+			columnNames = [self._assertSafeSQLIdentifier(column[0]) for column in cursor.fetchall()]
+			columnList = ", ".join(["`" + columnName + "`" for columnName in columnNames])
+
+			cursor = self._database.execute_sql("SELECT " + columnList + " FROM `" + tableName + "`")
+			for row in cursor.fetchall():
+				valueList = ", ".join([rawConnection.escape(value) for value in row])
+				dumpLines.append("INSERT INTO `" + tableName + "` (" + columnList + ") VALUES (" + valueList + ");")
+			dumpLines.append("")
+
+		return "\n".join(dumpLines)
+
 	def _upgradeDatabase(self,currentDatabaseSchemeVersion, targetDatabaseSchemeVersion):
 
 		migrationFunctions = [self._upgradeFrom1To2,
@@ -209,6 +289,35 @@ class DatabaseManager(object):
 
 	def _upgradeFrom9To10(self):
 		self._logger.info(" Starting 9 -> 10")
+		# What is changed:
+		# - CostModel:
+		# 	- Add Column: electricityKwh
+		# 	- Add Column: costSource
+		#
+		# Electricity cost is now measured through the Tasmota plugin rather than estimated
+		# from a static wattage, so the job records how many kWh it was based on and where
+		# the figure came from.
+		tableName = self._assertSafeSQLIdentifier("pjh_costmodel")
+		columnNames = [column.name for column in self._database.get_columns(tableName)]
+
+		# SQLite spells a float REAL, MySQL treats REAL as an alias whose precision depends on
+		# REAL_AS_FLOAT, so name DOUBLE explicitly there.
+		floatColumnType = "DOUBLE" if self._databaseSettings.useExternal == True else "REAL"
+
+		# Each column is checked on its own so a half-applied migration still completes.
+		if ("electricityKwh" in columnNames):
+			self._logger.info("  column 'electricityKwh' already present, skipping ALTER TABLE")
+		else:
+			self._database.execute_sql("ALTER TABLE " + tableName + " ADD COLUMN electricityKwh " + floatColumnType)
+
+		if ("costSource" in columnNames):
+			self._logger.info("  column 'costSource' already present, skipping ALTER TABLE")
+		else:
+			self._database.execute_sql("ALTER TABLE " + tableName + " ADD COLUMN costSource VARCHAR(255)")
+
+		PluginMetaDataModel.update(value="10").where(
+			PluginMetaDataModel.key == PluginMetaDataModel.KEY_DATABASE_SCHEME_VERSION).execute()
+
 		self._logger.info(" Successfully 9 -> 10")
 		pass
 

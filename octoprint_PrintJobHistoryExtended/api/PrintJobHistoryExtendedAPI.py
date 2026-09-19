@@ -559,6 +559,47 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
         })
 
 
+    #######################################################################################   BACKUP BEFORE UPGRADE
+    # Creates the .db copy of the local database. The frontend downloads it before starting
+    # the scheme upgrade, so a failed migration can always be rolled back.
+    @octoprint.plugin.BlueprintPlugin.route("/createDatabaseBackup", methods=["PUT"])
+    def put_create_database_backup(self):
+        return flask.jsonify(self._databaseManager.createLocalDatabaseBackup())
+
+
+    # Serves a .db backup file created by /createDatabaseBackup.
+    @octoprint.plugin.BlueprintPlugin.route("/downloadDatabaseBackup/<string:backupFileName>", methods=["GET"])
+    def get_download_database_backup(self, backupFileName):
+        # The name comes back from the client, so it must not be able to walk out of the folder.
+        if (backupFileName != os.path.basename(backupFileName)):
+            return flask.make_response("Invalid backup file name", 400)
+
+        backupFilePath = os.path.join(os.path.dirname(self._databaseManager.getDatabaseFileLocation()),
+                                      backupFileName)
+        if (os.path.isfile(backupFilePath) == False):
+            return flask.make_response("Backup file not found", 404)
+
+        return send_file(backupFilePath,
+                         mimetype='application/octet-stream',
+                         download_name=backupFileName,
+                         as_attachment=True)
+
+
+    # Plain-SQL dump of the external MySQL database - the external counterpart of the .db backup.
+    @octoprint.plugin.BlueprintPlugin.route("/exportDatabaseDump", methods=["GET"])
+    def get_export_database_dump(self):
+        exportResult = self._databaseManager.exportMySQLDatabaseDump()
+        if (exportResult["success"] == False):
+            return flask.make_response("Database dump export failed: " + str(exportResult["errorMessage"]), 400)
+
+        fileName = "printJobHistoryExtended-mysql-" + datetime.now().strftime("%Y%m%d-%H%M") + ".sql"
+        return flask.Response(
+            exportResult["dump"],
+            mimetype="application/sql",
+            headers={"Content-Disposition": "attachment; filename=" + fileName}
+        )
+
+
     #######################################################################################   KNOWN INSTANCES
     @octoprint.plugin.BlueprintPlugin.route("/loadKnownInstances", methods=["GET"])
     def get_known_instances(self):
