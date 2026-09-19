@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import sqlite3
+import threading
 
 from octoprint_PrintJobHistoryExtended.WrappedLoggingHandler import WrappedLoggingHandler
 from octoprint_PrintJobHistoryExtended.api import TransformPrintJob2JSON
@@ -54,8 +55,8 @@ class DatabaseManager(object):
 		"""Carrier for everything needed to open a database connection.
 
 		Deliberately a plain object and not the plugin settings themselves, because the
-		connection test and the local -> external copy both need to swap in a candidate
-		configuration and restore the previous one afterwards.
+		connection test and the meta-data reader build a connection from a candidate
+		configuration, and the local -> external copy swaps one in and restores it afterwards.
 		"""
 
 		def __init__(self):
@@ -96,6 +97,8 @@ class DatabaseManager(object):
 		self._instanceName = ""
 		# True when an external database needs a migration that we refuse to run automatically
 		self._schemeUpgradeNeeded = False
+		# Guards copyPrintJobDataToExternalDatabase against running twice at the same time.
+		self._copyDatabaseLock = threading.Lock()
 
 	################################################################################################## private functions
 
@@ -679,27 +682,49 @@ class DatabaseManager(object):
 		return rowDict
 
 
-	def _buildDatabaseConnection(self):
-		"""Create the peewee database object matching the current settings."""
-		if (self._databaseSettings.useExternal == False):
+	def _buildDatabaseConnection(self, databaseSettings=None, pooled=True):
+		"""Create the peewee database object matching the given (or the current) settings.
+
+		The object is NOT bound to the models and is not stored on self. Callers that want a
+		throwaway connection can therefore use it without touching global state.
+
+		pooled=False returns an unpooled MySQL connection. A pool is worth its overhead only
+		for the long-lived connection; building one per request means every short-lived reader
+		opens its own pool, and those connections compete with the live pool for the server's
+		connection slots.
+		"""
+		if (databaseSettings == None):
+			databaseSettings = self._databaseSettings
+
+		if (databaseSettings.useExternal == False):
 			# check_same_thread is an sqlite3 kwarg. peewee forwards unknown kwargs straight
 			# to the driver, so it must never reach the MySQL branch.
-			return SqliteDatabase(self._databaseSettings.fileLocation, check_same_thread=False)
+			return SqliteDatabase(databaseSettings.fileLocation, check_same_thread=False)
 
-		databaseType = self._databaseSettings.type
+		databaseType = databaseSettings.type
 		if (databaseType != SettingsKeys.KEY_DATABASE_TYPE_MYSQL):
 			raise ValueError("Unsupported external database type: '" + str(databaseType) + "'")
 
-		# Pooled, because stale_timeout recycles connections before MySQL's wait_timeout (or a
-		# router's NAT timeout) drops them, which is the usual "MySQL server has gone away".
 		# charset is set explicitly: MySQL's default "utf8" is 3-byte and cannot store emoji
 		# in file names or notes.
+		if (pooled == False):
+			return MySQLDatabase(
+				databaseSettings.name,
+				user=databaseSettings.user,
+				password=databaseSettings.password,
+				host=databaseSettings.host,
+				port=int(databaseSettings.port),
+				charset="utf8mb4"
+			)
+
+		# Pooled, because stale_timeout recycles connections before MySQL's wait_timeout (or a
+		# router's NAT timeout) drops them, which is the usual "MySQL server has gone away".
 		return PooledMySQLDatabase(
-			self._databaseSettings.name,
-			user=self._databaseSettings.user,
-			password=self._databaseSettings.password,
-			host=self._databaseSettings.host,
-			port=int(self._databaseSettings.port),
+			databaseSettings.name,
+			user=databaseSettings.user,
+			password=databaseSettings.password,
+			host=databaseSettings.host,
+			port=int(databaseSettings.port),
 			max_connections=8,
 			stale_timeout=280,
 			charset="utf8mb4"
@@ -764,40 +789,61 @@ class DatabaseManager(object):
 
 		Returns None on success, otherwise an error message.
 		"""
-		backupDatabaseSettings = self._databaseSettings
-		backupDatabase = self._database
+		# The candidate connection is built, used and discarded locally. Nothing is bound and
+		# nothing is stored on self, so the live connection is untouched even on failure.
 		errorMessage = None
 		try:
-			self._databaseSettings = databaseSettings
-			testDatabase = self._buildDatabaseConnection()
+			testDatabase = self._buildDatabaseConnection(databaseSettings, pooled=False)
 			testDatabase.connect(reuse_if_open=True)
 			testDatabase.close()
 		except Exception as e:
 			errorMessage = str(e)
 			self._logger.warning("Test database-connection failed: " + errorMessage)
-		finally:
-			# Restore first, then rebind: the models are global, so a failed test must not
-			# leave them pointing at the candidate database.
-			self._databaseSettings = backupDatabaseSettings
-			self._database = backupDatabase
-			if (self._database != None):
-				self._database.bind(MODELS)
-				DatabaseManager.db = self._database
 		return errorMessage
 
 
-	def _readSchemeVersionAndJobCount(self):
-		"""Read scheme version and job count from the currently bound database."""
+	def _readSchemeVersionAndJobCount(self, databaseSettings):
+		"""Read scheme version and job count over a short-lived, UNBOUND connection.
+
+		Deliberately raw SQL instead of the ORM: peewee's Model.bind writes the class-level
+		_meta.database, which every OctoPrint worker thread shares. Reading through the models
+		would mean rebinding them, and a request running concurrently in another thread would
+		then silently execute against this database instead of the configured one.
+		"""
 		schemeVersion = None
 		jobCount = None
+
+		metaDataTableName = self._assertSafeSQLIdentifier(PluginMetaDataModel._meta.table_name)
+		printJobTableName = self._assertSafeSQLIdentifier(PrintJobModel._meta.table_name)
+
+		database = self._buildDatabaseConnection(databaseSettings, pooled=False)
 		try:
-			schemeVersionModel = PluginMetaDataModel.get(
-				PluginMetaDataModel.key == PluginMetaDataModel.KEY_DATABASE_SCHEME_VERSION)
-			schemeVersion = int(schemeVersionModel.value)
-			jobCount = PrintJobModel.select().count()
-		except Exception as e:
-			if (self._isMissingTableError(str(e)) == False):
-				raise
+			database.connect(reuse_if_open=True)
+
+			# Both differ per backend: "?" vs "%s", and "key" quoted as "key" vs `key`.
+			placeholder = database.param
+			keyColumnName = database.quote[0] + "key" + database.quote[1]
+
+			try:
+				cursor = database.execute_sql(
+					"SELECT value FROM " + metaDataTableName + " WHERE " + keyColumnName + " = " + placeholder,
+					(PluginMetaDataModel.KEY_DATABASE_SCHEME_VERSION,))
+				row = cursor.fetchone()
+				if (row != None):
+					schemeVersion = int(row[0])
+
+				cursor = database.execute_sql("SELECT COUNT(*) FROM " + printJobTableName)
+				jobCount = cursor.fetchone()[0]
+			except Exception as e:
+				# A table that does not exist yet means "no data", not a failure.
+				if (self._isMissingTableError(str(e)) == False):
+					raise
+		finally:
+			try:
+				database.close()
+			except Exception:
+				pass
+
 		return (schemeVersion, jobCount)
 
 
@@ -805,6 +851,10 @@ class DatabaseManager(object):
 		"""Report scheme version and job count for the local and (if configured) external database.
 
 		databaseSettings: candidate external settings to probe, or None to use the stored ones.
+
+		This runs on every page load, concurrently with ordinary history queries in other
+		worker threads, so it must never rebind the global models. See
+		_readSchemeVersionAndJobCount.
 		"""
 		result = {
 			"success": True,
@@ -818,46 +868,27 @@ class DatabaseManager(object):
 			"instanceName": self._instanceName
 		}
 
-		backupDatabaseSettings = self._databaseSettings
-		backupDatabase = self._database
+		currentSettings = self._databaseSettings
+		externalSettings = databaseSettings if databaseSettings != None else copy.copy(currentSettings)
 
-		externalSettings = databaseSettings if databaseSettings != None else copy.copy(backupDatabaseSettings)
-
+		# --- local SQLite
+		localSettings = copy.copy(currentSettings)
+		localSettings.useExternal = False
+		localSettings.type = SettingsKeys.KEY_DATABASE_TYPE_SQLITE
+		localSettings.fileLocation = self._databaseFileLocation
 		try:
-			# --- local SQLite
-			localSettings = copy.copy(backupDatabaseSettings)
-			localSettings.useExternal = False
-			localSettings.type = SettingsKeys.KEY_DATABASE_TYPE_SQLITE
-			localSettings.fileLocation = self._databaseFileLocation
-			try:
-				self._databaseSettings = localSettings
-				if (self.connectToDatabase(sendErrorPopUp=False) == True):
-					(result["localSchemeVersion"], result["localJobCount"]) = self._readSchemeVersionAndJobCount()
-				self.closeDatabase()
-			except Exception as e:
-				self._logger.warning("Could not read local database meta data: " + str(e))
+			(result["localSchemeVersion"], result["localJobCount"]) = self._readSchemeVersionAndJobCount(localSettings)
+		except Exception as e:
+			self._logger.warning("Could not read local database meta data: " + str(e))
 
-			# --- external database, only when one is configured
-			if (externalSettings.useExternal == True):
-				try:
-					self._databaseSettings = externalSettings
-					if (self.connectToDatabase(sendErrorPopUp=False) == True):
-						(result["externalSchemeVersion"], result["externalJobCount"]) = self._readSchemeVersionAndJobCount()
-					else:
-						result["success"] = False
-						result["errorMessage"] = "Could not connect to the external database."
-					self.closeDatabase()
-				except Exception as e:
-					result["success"] = False
-					result["errorMessage"] = str(e)
-					self._logger.warning("Could not read external database meta data: " + str(e))
-		finally:
-			# Always restore the live connection, whatever happened above.
-			self._databaseSettings = backupDatabaseSettings
-			self._database = backupDatabase
-			if (self._database != None):
-				self._database.bind(MODELS)
-				DatabaseManager.db = self._database
+		# --- external database, only when one is configured
+		if (externalSettings.useExternal == True):
+			try:
+				(result["externalSchemeVersion"], result["externalJobCount"]) = self._readSchemeVersionAndJobCount(externalSettings)
+			except Exception as e:
+				result["success"] = False
+				result["errorMessage"] = str(e)
+				self._logger.warning("Could not read external database meta data: " + str(e))
 
 		return result
 
@@ -951,8 +982,40 @@ class DatabaseManager(object):
 
 
 	def copyPrintJobDataToExternalDatabase(self, databaseSettings):
+		"""Copy the local print jobs into the external database, one copy at a time.
+
+		The lock only excludes a second copy (a double-clicked button, or two admins): both
+		contenders take it. It does NOT protect concurrent readers - see the hazard note on
+		_copyPrintJobDataToExternalDatabase.
+		"""
+		if (self._copyDatabaseLock.acquire(blocking=False) == False):
+			self._logger.warning("A database copy is already running, ignoring the second request")
+			return {
+				"success": False,
+				"errorMessage": "A database copy is already running.",
+				"copiedJobCount": 0,
+				"totalJobCountAfterCopy": None
+			}
+		try:
+			return self._copyPrintJobDataToExternalDatabase(databaseSettings)
+		finally:
+			self._copyDatabaseLock.release()
+
+
+	def _copyPrintJobDataToExternalDatabase(self, databaseSettings):
 		"""Copy every print job (and its filaments, temperatures and costs) from the local
 		SQLite database into the configured external database.
+
+		HAZARD: this rebinds the global MODELS. peewee's Model.bind writes the class-level
+		_meta.database, which every OctoPrint worker thread shares, so for the duration of the
+		copy a request running in another thread executes against whichever database is bound
+		here rather than the configured one. A print finishing mid-copy can therefore be
+		written to the wrong database.
+
+		This is tolerated only because the copy is a manual, one-off migration step that an
+		admin triggers from the settings dialog. Do NOT copy this pattern:
+		loadDatabaseMetaInformations shows the right way, reading over a short-lived
+		connection that is never bound.
 
 		The print job ids are NOT preserved: on a shared database instance A's id 47 would
 		collide with instance B's. MySQL assigns new ids and the child rows are remapped onto
