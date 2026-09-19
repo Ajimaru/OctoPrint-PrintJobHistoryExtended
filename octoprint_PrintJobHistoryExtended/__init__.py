@@ -408,8 +408,9 @@ class PrintJobHistoryExtendedPlugin(
 		# - grap measured data for each tool
 		filamentCalculatedDict = self._readCalculatedFilamentMetaData(fileData)
 		# Preferred source: usage SpoolManagerExtended captured while booking the finished job.
-		# It is immune to the odometer reset race and covers printer-storage prints.
-		lastPrintJobUsage = self._readLastPrintJobUsage()
+		# It survives the odometer reset and covers printer-storage prints - but only once
+		# the peer has actually booked, which is why the reader verifies the snapshot age.
+		lastPrintJobUsage = self._readLastPrintJobUsage(printJob.printStartDateTime)
 		filamentExtrusionArray = None
 		if (lastPrintJobUsage == None):
 			filamentExtrusionArray = self._readMeasuredFilament()
@@ -573,7 +574,7 @@ class PrintJobHistoryExtendedPlugin(
 	# per-tool usage already booked by SpoolManagerExtended, including its sliced-metadata
 	# fallback for printers whose extrusion the odometer never sees (Bambu and friends).
 	# Returns None when the peer plugin does not offer the newer API yet.
-	def _readLastPrintJobUsage(self):
+	def _readLastPrintJobUsage(self, printStartDateTime=None):
 		if (self._isSpoolManagerInstalledAndEnabled() == False):
 			return None
 		if (hasattr(self._spoolManagerPluginImplementation, "api_getLastPrintJobUsage") == False):
@@ -591,7 +592,35 @@ class PrintJobHistoryExtendedPlugin(
 		if (usage.get("apiVersion", 0) < 1):
 			self._logger.warning("SpoolManagerExtended reports an unsupported usage apiVersion, ignoring it")
 			return None
+		if (self._isUsageFromThisPrintJob(usage, printStartDateTime) == False):
+			return None
 		return usage
+
+
+	# The snapshot only becomes this job's once SpoolManagerExtended has booked it, and
+	# OctoPrint guarantees no order between two plugins' PRINT_DONE handlers. Running first
+	# means reading the PREVIOUS job's snapshot, which would silently overwrite good values
+	# with stale ones - worse than having no snapshot at all, because the fallback path is
+	# then skipped. A snapshot captured before this print even started cannot be ours.
+	def _isUsageFromThisPrintJob(self, usage, printStartDateTime):
+		if (printStartDateTime == None):
+			return True
+
+		capturedAt = usage.get("capturedAt")
+		if (StringUtils.isEmpty(capturedAt) == True):
+			self._logger.warning("SpoolManagerExtended usage has no 'capturedAt', cannot tell whether it belongs to this print job. Falling back to the odometer.")
+			return False
+
+		try:
+			capturedAtDateTime = datetime.datetime.fromisoformat(capturedAt)
+		except Exception as e:
+			self._logger.warning("Could not parse 'capturedAt' '" + str(capturedAt) + "' from SpoolManagerExtended: " + str(e))
+			return False
+
+		if (capturedAtDateTime < printStartDateTime):
+			self._logger.info("SpoolManagerExtended has not booked this print job yet (snapshot from '" + str(capturedAt) + "' is older than this print's start). Reading the odometer instead.")
+			return False
+		return True
 
 	# dict of this
 	# {u'tool4': {u'volume': 185.20129656279946, u'length': 76997.75167999369},
