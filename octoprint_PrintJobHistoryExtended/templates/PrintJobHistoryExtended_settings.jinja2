@@ -134,10 +134,16 @@
                 <div class="control-group">
                     <label class="control-label">Printer's smart plug</label>
                     <div class="controls">
+                        <!-- valueAllowUnset keeps the stored ip when the option list is still
+                             empty: the plugs arrive with the initalData push, which lands after
+                             Knockout has already bound this select. Without it Knockout would
+                             not find the saved value among zero options and silently reset the
+                             setting to the 'None' caption, losing the selection on every save. -->
                         <select data-bind="options: tasmotaPlugs,
                                            optionsText: 'label',
                                            optionsValue: 'ip',
                                            value: pluginSettings.tasmotaPlugIp,
+                                           valueAllowUnset: true,
                                            optionsCaption: 'None',
                                            enable: isTasmotaInstalled()"></select>
                         <span class="help-inline">Which plug powers this printer. Tasmota does not know by itself.</span>

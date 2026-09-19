@@ -8,6 +8,7 @@ from queue import Queue
 
 import octoprint.plugin
 from octoprint.events import Events
+from octoprint.filemanager import FileDestinations
 
 import datetime
 import math
@@ -366,19 +367,50 @@ class PrintJobHistoryExtendedPlugin(
 
 		return version
 
+	# Returns the on-disk path of a print file, or None when there is none.
+	# Printer-hosted storage (sd-card, and connectors like Bambu) keeps the file on the
+	# printer itself, so path_on_disk raises instead of answering. That is a normal setup,
+	# not a failure, hence the quiet info-log for it.
+	def _resolveFileOnDisk(self, fileOrigin, filePath):
+		if (fileOrigin != FileDestinations.LOCAL):
+			self._logger.info("No file on disk for origin '" + str(fileOrigin) + "' (only '" + FileDestinations.LOCAL + "' is stored on disk). Skipping slicer settings.")
+			return None
+		try:
+			return self._file_manager.path_on_disk(fileOrigin, filePath)
+		except Exception as e:
+			# Even a local file can be gone by now, e.g. deleted right after the print
+			self._logger.warning("Could not resolve path on disk for '" + str(filePath) + "': " + str(e))
+			return None
+
+
+	# Returns the file meta data, or None when the storage cannot supply any.
+	# Printer storage answers None when the connector reports no metadata capability, so
+	# every caller has to cope with a missing dict instead of assuming one.
+	def _readFileMetaData(self, fileOrigin, filePath):
+		try:
+			fileData = self._file_manager.get_metadata(fileOrigin, filePath)
+		except Exception as e:
+			self._logger.warning("Could not read meta data for '" + str(filePath) + "': " + str(e))
+			return None
+		if (fileData == None):
+			self._logger.info("No meta data available for origin '" + str(fileOrigin) + "' (printer-hosted file or connector without metadata support)")
+		return fileData
+
+
 	# Grabs all informations for the filament attributes
 	def _createAndAssignFilamentModel(self, printJob, payload):
 
 		self._logger.info("----- Start reading filament -----")
 		filePath = payload["path"]
-		fileData = self._file_manager.get_metadata(payload["origin"], filePath)
+		fileData = self._readFileMetaData(payload["origin"], filePath)
 
 		# - grab calcualted data for each tool
 		# - grap measured data for each tool
 		filamentCalculatedDict = self._readCalculatedFilamentMetaData(fileData)
 		# Preferred source: usage SpoolManagerExtended captured while booking the finished job.
-		# It is immune to the odometer reset race and covers printer-storage prints.
-		lastPrintJobUsage = self._readLastPrintJobUsage()
+		# It survives the odometer reset and covers printer-storage prints - but only once
+		# the peer has actually booked, which is why the reader verifies the snapshot age.
+		lastPrintJobUsage = self._readLastPrintJobUsage(printJob.printStartDateTime)
 		filamentExtrusionArray = None
 		if (lastPrintJobUsage == None):
 			filamentExtrusionArray = self._readMeasuredFilament()
@@ -542,7 +574,7 @@ class PrintJobHistoryExtendedPlugin(
 	# per-tool usage already booked by SpoolManagerExtended, including its sliced-metadata
 	# fallback for printers whose extrusion the odometer never sees (Bambu and friends).
 	# Returns None when the peer plugin does not offer the newer API yet.
-	def _readLastPrintJobUsage(self):
+	def _readLastPrintJobUsage(self, printStartDateTime=None):
 		if (self._isSpoolManagerInstalledAndEnabled() == False):
 			return None
 		if (hasattr(self._spoolManagerPluginImplementation, "api_getLastPrintJobUsage") == False):
@@ -560,7 +592,35 @@ class PrintJobHistoryExtendedPlugin(
 		if (usage.get("apiVersion", 0) < 1):
 			self._logger.warning("SpoolManagerExtended reports an unsupported usage apiVersion, ignoring it")
 			return None
+		if (self._isUsageFromThisPrintJob(usage, printStartDateTime) == False):
+			return None
 		return usage
+
+
+	# The snapshot only becomes this job's once SpoolManagerExtended has booked it, and
+	# OctoPrint guarantees no order between two plugins' PRINT_DONE handlers. Running first
+	# means reading the PREVIOUS job's snapshot, which would silently overwrite good values
+	# with stale ones - worse than having no snapshot at all, because the fallback path is
+	# then skipped. A snapshot captured before this print even started cannot be ours.
+	def _isUsageFromThisPrintJob(self, usage, printStartDateTime):
+		if (printStartDateTime == None):
+			return True
+
+		capturedAt = usage.get("capturedAt")
+		if (StringUtils.isEmpty(capturedAt) == True):
+			self._logger.warning("SpoolManagerExtended usage has no 'capturedAt', cannot tell whether it belongs to this print job. Falling back to the odometer.")
+			return False
+
+		try:
+			capturedAtDateTime = datetime.datetime.fromisoformat(capturedAt)
+		except Exception as e:
+			self._logger.warning("Could not parse 'capturedAt' '" + str(capturedAt) + "' from SpoolManagerExtended: " + str(e))
+			return False
+
+		if (capturedAtDateTime < printStartDateTime):
+			self._logger.info("SpoolManagerExtended has not booked this print job yet (snapshot from '" + str(capturedAt) + "' is older than this print's start). Reading the odometer instead.")
+			return False
+		return True
 
 	# dict of this
 	# {u'tool4': {u'volume': 185.20129656279946, u'length': 76997.75167999369},
@@ -569,7 +629,9 @@ class PrintJobHistoryExtendedPlugin(
 
 	def _readCalculatedFilamentMetaData(self, fileData):
 		filamentAnalyseDict = None
-		if "analysis" in fileData:
+		# No meta data at all (printer-hosted file) is not the same as meta data without a
+		# filament analysis - both end up without a calculated length, though.
+		if (fileData != None and "analysis" in fileData):
 			if "filament" in fileData["analysis"]:
 				filamentAnalyseDict = fileData["analysis"]["filament"]
 		if (filamentAnalyseDict == None):
@@ -1014,19 +1076,32 @@ class PrintJobHistoryExtendedPlugin(
 			self._currentPrintJobModel.printStatusResult = printStatus
 
 			# - Slicer Settings
-			selectedFilename = payload.get("path")
-			selectedFile = self._file_manager.path_on_disk(payload.get("origin"), selectedFilename)
+			# Check the expressions first: the parser needs a real file on disk, and a
+			# printer-hosted print has none. Without expressions there is nothing to read
+			# anyway, so the file manager is not touched at all in the default config.
 			slicerSettingsExpressions = self._settings.get([SettingsKeys.SETTINGS_KEY_SLICERSETTINGS_KEYVALUE_EXPRESSION])
 			if (slicerSettingsExpressions != None and len(slicerSettingsExpressions) != 0):
-				slicerSettings = SlicerSettingsParser(self._logger).extractSlicerSettings(selectedFile, slicerSettingsExpressions)
-				if (slicerSettings.settingsAsText != None and len(slicerSettings.settingsAsText) != 0):
-					self._currentPrintJobModel.slicerSettingsAsText = slicerSettings.settingsAsText
+				selectedFile = self._resolveFileOnDisk(payload.get("origin"), payload.get("path"))
+				if (selectedFile != None):
+					slicerSettings = SlicerSettingsParser(self._logger).extractSlicerSettings(selectedFile, slicerSettingsExpressions)
+					if (slicerSettings.settingsAsText != None and len(slicerSettings.settingsAsText) != 0):
+						self._currentPrintJobModel.slicerSettingsAsText = slicerSettings.settingsAsText
 
 			# - Image / Thumbnail
-			self._grabImage(payload)
+			# Enrichment only: a print that happened must be recorded even when we cannot
+			# illustrate it, so the image step never takes the whole job down.
+			try:
+				self._grabImage(payload)
+			except Exception as e:
+				self._logger.exception("Could not grab an image, storing the print job without one: " + str(e))
 
 			# - FilamentInformations e.g. length
-			self._createAndAssignFilamentModel(self._currentPrintJobModel, payload)
+			# Depends on file meta data and on the SpoolManagerExtended plugin. Both are
+			# optional, the print job record is not.
+			try:
+				self._createAndAssignFilamentModel(self._currentPrintJobModel, payload)
+			except Exception as e:
+				self._logger.exception("Could not read filament informations, storing the print job without them: " + str(e))
 
 			# - Costs
 			self._addCostsToPrintModel(self._currentPrintJobModel)
@@ -1152,9 +1227,9 @@ class PrintJobHistoryExtendedPlugin(
 	def _takeThumbnailImage(self, payload, storeImage=True):
 		self._logger.info("Try reading Thumbnail")
 		thumbnailPresent = False
-		metadata = self._file_manager.get_metadata(payload["origin"], payload["path"])
+		metadata = self._readFileMetaData(payload["origin"], payload["path"])
 		# check if available
-		if ("thumbnail" in metadata):
+		if (metadata != None and "thumbnail" in metadata):
 			thumbnailPresent = self._cameraManager.takePluginThumbnail(
 				CameraManager.buildSnapshotFilename(self._currentPrintJobModel.printStartDateTime),
 				metadata["thumbnail"],
