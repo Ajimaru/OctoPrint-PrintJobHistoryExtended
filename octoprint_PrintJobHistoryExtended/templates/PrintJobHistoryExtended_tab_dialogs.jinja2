@@ -259,6 +259,16 @@
                         -->
                         <div class="span6" style="">
 
+                            <!-- Filament usage is booked by SpoolManagerExtended a moment after
+                                 the job is stored, so the dialog can open before it arrives.
+                                 Without this hint the zeros look like a result. -->
+                            <div class="alert alert-info"
+                                 style="margin-left:40px; margin-bottom:8px; padding:6px 10px;"
+                                 data-bind="visible: isFilamentUsagePending">
+                                <i class="fas fa-spinner fa-spin"></i>
+                                &nbsp;Reading filament usage&hellip;
+                            </div>
+
                             <!-- TABs General / Tool measure / Costs - TABs -->
                             <div class="tabbable" style="margin-left:40px"> <!-- Only required for left/right tabs -->
                                 {# TAB - NAVIGATION #}
