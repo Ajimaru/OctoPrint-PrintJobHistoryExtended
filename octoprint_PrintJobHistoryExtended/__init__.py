@@ -726,6 +726,9 @@ class PrintJobHistoryExtendedPlugin(
 	def _createPrintJobModel(self, payload):
 		self._currentPrintJobModel = PrintJobModel()
 		self._currentPrintJobModel.printStartDateTime = datetime.datetime.now()
+		# Per instance, because the attribute is declared on the class - a leftover from the
+		# previous job would otherwise be attributed to this one.
+		self._currentPrintJobModel.highestTemperatures = None
 
 		self._currentPrintJobModel.fileOrigin = payload["origin"]
 		self._currentPrintJobModel.fileName = payload["name"]
@@ -743,31 +746,66 @@ class PrintJobHistoryExtendedPlugin(
 		self._readAndAssignCurrentTemperatureDelayed(self._currentPrintJobModel)
 
 
-	def _readCurrentTemperatureFromPrinterAsync(self, printer, printJobModel, addTemperatureToPrintModel):
-		dealyInSeconds = self._settings.get_int([SettingsKeys.SETTINGS_KEY_DELAY_READING_TEMPERATURE_FROM_PRINTER])
-		time.sleep(dealyInSeconds)
+	# Reading the temperature once, a fixed delay after the start, is a guess about how long
+	# the printer needs. A Bambu calibrates first and ramps its target up in steps, so after
+	# 60 seconds the nozzle target was still 140 instead of the 220 it printed with.
+	# Tracking the highest target seen during the print needs no such guess and works the
+	# same on Marlin, Klipper and connector printers.
+	def _trackHighestTemperatureAsync(self, printer, printJobModel, toolId, delayInSeconds, intervalInSeconds):
+		time.sleep(delayInSeconds)
 
-		currentTemps = printer.get_current_temperatures()
-		if (currentTemps != None and "bed" in currentTemps and "tool0" in currentTemps):
-			tempBed = currentTemps["bed"]["target"]
-			# Maybe an other tool should be used.
-			toolId = self._settings.get([SettingsKeys.SETTINGS_KEY_DEFAULT_TOOL_ID])  # "tool0"
-			tempTool = -1
+		highestBed = None
+		highestTool = None
+		while (self._currentPrintJobModel is printJobModel):
 			try:
-				tempTool = currentTemps[toolId]["target"]
+				currentTemps = printer.get_current_temperatures()
+				if (currentTemps != None):
+					highestBed = self._higherTemperature(highestBed, currentTemps, "bed")
+					highestTool = self._higherTemperature(highestTool, currentTemps, toolId)
 			except Exception as e:
-				self._logger.error("Could not read temperature from Tool '" + toolId + "'", e)
+				self._logger.warning("Could not read the current temperature: " + str(e))
 
-			self._logger.info(
-				"Temperature read from Printer Bed: '" + str(tempBed) +
-				"' Tool " + toolId + ": '" + str(tempTool) + "' after a delay of '"+str(dealyInSeconds)+"' seconds")
-			addTemperatureToPrintModel(printJobModel, tempBed, toolId, tempTool)
+			# Publish after every sample, not just at the end: PRINT_DONE can arrive while
+			# this thread sleeps, and a job stored in that window would get no temperature.
+			if (highestBed != None or highestTool != None):
+				printJobModel.highestTemperatures = (highestBed, toolId, highestTool)
+
+			if (printer.is_printing() == False and printer.is_paused() == False):
+				break
+			time.sleep(intervalInSeconds)
+
+		# Park the result on the model instead of writing it: temperatures are only persisted
+		# by insertPrintJob, and this thread can still be running when the job is stored.
+		# _capturePrintJobData picks it up at the one moment where it is guaranteed to count.
+		self._logger.info(
+			"Highest temperature during the print - Bed: '" + str(highestBed) +
+			"' Tool " + toolId + ": '" + str(highestTool) + "'")
+		printJobModel.highestTemperatures = (highestBed, toolId, highestTool)
+
+
+	# The target is what the job asked for; actual only reaches it, and overshoots. Fall back
+	# to actual when a printer reports no target at all.
+	def _higherTemperature(self, currentHighest, currentTemps, sensorName):
+		if (sensorName not in currentTemps):
+			return currentHighest
+		temperature = currentTemps[sensorName].get("target")
+		if (temperature == None or temperature == 0):
+			temperature = currentTemps[sensorName].get("actual")
+		if (temperature == None):
+			return currentHighest
+		if (currentHighest == None or temperature > currentHighest):
+			return temperature
+		return currentHighest
 
 
 	def _readAndAssignCurrentTemperatureDelayed(self, printJobModel):
-		thread = threading.Thread(name='ReadCurrentTemperature',
-								  target=self._readCurrentTemperatureFromPrinterAsync,
-								  args=(self._printer, printJobModel, self._addTemperatureToPrintModel,))
+		# The delay setting keeps its meaning: nothing is sampled before it has passed, so a
+		# printer that reports garbage right after the start is still skipped.
+		delayInSeconds = self._settings.get_int([SettingsKeys.SETTINGS_KEY_DELAY_READING_TEMPERATURE_FROM_PRINTER])
+		toolId = self._settings.get([SettingsKeys.SETTINGS_KEY_DEFAULT_TOOL_ID])  # "tool0"
+		thread = threading.Thread(name='TrackHighestTemperature',
+								  target=self._trackHighestTemperatureAsync,
+								  args=(self._printer, printJobModel, toolId, delayInSeconds, 15,))
 		thread.daemon = True
 		thread.start()
 		pass
@@ -1277,6 +1315,14 @@ class PrintJobHistoryExtendedPlugin(
 					slicerSettings = SlicerSettingsParser(self._logger).extractSlicerSettings(selectedFile, slicerSettingsExpressions)
 					if (slicerSettings.settingsAsText != None and len(slicerSettings.settingsAsText) != 0):
 						self._currentPrintJobModel.slicerSettingsAsText = slicerSettings.settingsAsText
+
+			# - Temperatures, highest seen while printing (see _trackHighestTemperatureAsync)
+			highestTemperatures = self._currentPrintJobModel.highestTemperatures
+			if (highestTemperatures != None):
+				(highestBed, toolId, highestTool) = highestTemperatures
+				self._addTemperatureToPrintModel(self._currentPrintJobModel, highestBed, toolId, highestTool)
+			else:
+				self._logger.warning("No temperature was tracked during this print, storing none")
 
 			# - Image / Thumbnail
 			# Enrichment only: a print that happened must be recorded even when we cannot
