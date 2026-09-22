@@ -80,6 +80,11 @@ class PrintJobHistoryExtendedPlugin(
 	octoprint.plugin.SimpleApiPlugin
 ):
 
+	# How long after a print ended a filament-usage event is still accepted as belonging to
+	# it. The measured gap is under a second; anything beyond this did not come from that
+	# print and must not rewrite a job the user may already be editing.
+	BACKFILL_MAX_AGE_IN_SECONDS = 120
+
 	def initialize(self):
 		self._displayLayerProgressPluginImplementation = None
 		self._displayLayerProgressPluginImplementationState = None
@@ -93,6 +98,13 @@ class PrintJobHistoryExtendedPlugin(
 		self._costEstimationPluginImplementationState = None
 		self._tasmotaPluginImplementation = None
 		self._tasmotaPluginImplementationState = None
+		# SpoolManagerExtended books the filament of a finished job a moment AFTER our own
+		# PRINT_DONE handler stored it, so the usage arrives later, by event. These remember
+		# which job is waiting for it. In memory only: after a restart no print is pending,
+		# and guessing which stored job a late event belongs to is worse than skipping it.
+		self._backfillTargetDatabaseId = None
+		self._backfillTargetPrintEndDateTime = None
+		self._backfillLock = threading.Lock()
 		self._printHistoryPluginImplementation = None
 
 		pluginDataBaseFolder = self.get_plugin_data_folder()
@@ -429,49 +441,53 @@ class PrintJobHistoryExtendedPlugin(
 		allVendors = ""
 		allMaterials = ""
 
-		# - assign calculated values
+		# A tool is worth recording when the slicer calculated something for it OR when a spool
+		# is selected on it. Printer-hosted prints (Bambu and other connectors) have no file
+		# meta data at all, so only the calculated dict is missing - the spool data is there
+		# and used to be thrown away, which left the whole dialog blank.
+		allToolIds = []
 		if (filamentCalculatedDict != None):
-
 			for toolId in filamentCalculatedDict:
+				if ((toolId in allToolIds) == False):
+					allToolIds.append(toolId)
+		if (selectedSpoolDataDict != None):
+			for toolId in selectedSpoolDataDict:
+				if ((toolId in allToolIds) == False):
+					allToolIds.append(toolId)
+
+		for toolId in allToolIds:
+			filamentModel = printJob.getFilamentModelByToolId(toolId)
+			if (filamentModel == None):
 				filamentModel = FilamentModel()
 				filamentModel.toolId = toolId
+				printJob.addFilamentModel(filamentModel)
 
+			# - assign calculated values
+			if (filamentCalculatedDict != None and toolId in filamentCalculatedDict):
 				calculatedLength = filamentCalculatedDict[toolId]["length"]
 				# not needed calculatedVolumne = filamentCalculatedDict[toolId]["volume"]
 
 				filamentModel.calculatedLength = calculatedLength
 				calculatedTotalLength = calculatedTotalLength + calculatedLength
-				printJob.addFilamentModel(filamentModel)
 
-				# Assign SpoolData (e.g. Name) for the calculated tools (only for calc-lenght > 0)
-				# get spool data, if available
-				if (calculatedLength > 0 and selectedSpoolDataDict != None and toolId in selectedSpoolDataDict):
-					spoolData = selectedSpoolDataDict[toolId]
+			# Assign SpoolData (e.g. Name), no longer gated on calculatedLength > 0: a
+			# printer-hosted print has no calculated length at all, and an unknown length is
+			# no reason to forget which spool was mounted.
+			if (selectedSpoolDataDict != None and toolId in selectedSpoolDataDict):
+				spoolData = selectedSpoolDataDict[toolId]
 
-					filamentModel.spoolName = spoolData["spoolName"]
-					filamentModel.vendor = spoolData["vendor"]
-					filamentModel.material = spoolData["material"]
-					filamentModel.diameter = spoolData["diameter"]
-					filamentModel.density = spoolData["density"]
+				filamentModel.spoolName = spoolData["spoolName"]
+				filamentModel.vendor = spoolData["vendor"]
+				filamentModel.material = spoolData["material"]
+				filamentModel.diameter = spoolData["diameter"]
+				filamentModel.density = spoolData["density"]
 
-					filamentModel.spoolCost = spoolData["spoolCost"]
-					filamentModel.weight = spoolData["weight"]
+				filamentModel.spoolCost = spoolData["spoolCost"]
+				filamentModel.weight = spoolData["weight"]
 
-					if (filamentModel.spoolName != None and (filamentModel.spoolName in allSpoolNames) == False):
-						if (allSpoolNames != ""):
-							allSpoolNames = allSpoolNames + ", "
-						allSpoolNames = allSpoolNames + filamentModel.spoolName
-
-					if (filamentModel.vendor != None and (filamentModel.vendor in allVendors) == False):
-						if (allVendors != ""):
-							allVendors = allVendors + ", "
-						allVendors = allVendors + filamentModel.vendor
-
-					if (filamentModel.material != None and (filamentModel.material in allMaterials) == False):
-						if (allMaterials != ""):
-							allMaterials = allMaterials + ", "
-						allMaterials = allMaterials + filamentModel.material
-				pass
+				allSpoolNames = self._appendUniqueToCommaList(allSpoolNames, filamentModel.spoolName)
+				allVendors = self._appendUniqueToCommaList(allVendors, filamentModel.vendor)
+				allMaterials = self._appendUniqueToCommaList(allMaterials, filamentModel.material)
 
 		totalFilamentModel.calculatedLength = calculatedTotalLength
 		totalFilamentModel.spoolName = allSpoolNames
@@ -677,6 +693,17 @@ class PrintJobHistoryExtendedPlugin(
 				" reading for '" + toolId + "',  Spool: '" + str(spoolData["spoolName"]) + "', Material: '" + str(spoolData["material"]) + "', Vendor: '" + str(spoolData["vendor"]) + "'")
 		return result
 
+	# The "total" row lists every distinct spool / vendor / material of the job as one string.
+	def _appendUniqueToCommaList(self, currentList, value):
+		if (value == None or value == ""):
+			return currentList
+		if ((value in currentList) == True):
+			return currentList
+		if (currentList != ""):
+			return currentList + ", " + value
+		return currentList + value
+
+
 	def _calculateFilamentWeightForLength(self, usedLength, diameter, density):
 		result = 0.0
 		if (usedLength != None and diameter != None and density != None):
@@ -699,6 +726,9 @@ class PrintJobHistoryExtendedPlugin(
 	def _createPrintJobModel(self, payload):
 		self._currentPrintJobModel = PrintJobModel()
 		self._currentPrintJobModel.printStartDateTime = datetime.datetime.now()
+		# Per instance, because the attribute is declared on the class - a leftover from the
+		# previous job would otherwise be attributed to this one.
+		self._currentPrintJobModel.highestTemperatures = None
 
 		self._currentPrintJobModel.fileOrigin = payload["origin"]
 		self._currentPrintJobModel.fileName = payload["name"]
@@ -716,31 +746,66 @@ class PrintJobHistoryExtendedPlugin(
 		self._readAndAssignCurrentTemperatureDelayed(self._currentPrintJobModel)
 
 
-	def _readCurrentTemperatureFromPrinterAsync(self, printer, printJobModel, addTemperatureToPrintModel):
-		dealyInSeconds = self._settings.get_int([SettingsKeys.SETTINGS_KEY_DELAY_READING_TEMPERATURE_FROM_PRINTER])
-		time.sleep(dealyInSeconds)
+	# Reading the temperature once, a fixed delay after the start, is a guess about how long
+	# the printer needs. A Bambu calibrates first and ramps its target up in steps, so after
+	# 60 seconds the nozzle target was still 140 instead of the 220 it printed with.
+	# Tracking the highest target seen during the print needs no such guess and works the
+	# same on Marlin, Klipper and connector printers.
+	def _trackHighestTemperatureAsync(self, printer, printJobModel, toolId, delayInSeconds, intervalInSeconds):
+		time.sleep(delayInSeconds)
 
-		currentTemps = printer.get_current_temperatures()
-		if (currentTemps != None and "bed" in currentTemps and "tool0" in currentTemps):
-			tempBed = currentTemps["bed"]["target"]
-			# Maybe an other tool should be used.
-			toolId = self._settings.get([SettingsKeys.SETTINGS_KEY_DEFAULT_TOOL_ID])  # "tool0"
-			tempTool = -1
+		highestBed = None
+		highestTool = None
+		while (self._currentPrintJobModel is printJobModel):
 			try:
-				tempTool = currentTemps[toolId]["target"]
+				currentTemps = printer.get_current_temperatures()
+				if (currentTemps != None):
+					highestBed = self._higherTemperature(highestBed, currentTemps, "bed")
+					highestTool = self._higherTemperature(highestTool, currentTemps, toolId)
 			except Exception as e:
-				self._logger.error("Could not read temperature from Tool '" + toolId + "'", e)
+				self._logger.warning("Could not read the current temperature: " + str(e))
 
-			self._logger.info(
-				"Temperature read from Printer Bed: '" + str(tempBed) +
-				"' Tool " + toolId + ": '" + str(tempTool) + "' after a delay of '"+str(dealyInSeconds)+"' seconds")
-			addTemperatureToPrintModel(printJobModel, tempBed, toolId, tempTool)
+			# Publish after every sample, not just at the end: PRINT_DONE can arrive while
+			# this thread sleeps, and a job stored in that window would get no temperature.
+			if (highestBed != None or highestTool != None):
+				printJobModel.highestTemperatures = (highestBed, toolId, highestTool)
+
+			if (printer.is_printing() == False and printer.is_paused() == False):
+				break
+			time.sleep(intervalInSeconds)
+
+		# Park the result on the model instead of writing it: temperatures are only persisted
+		# by insertPrintJob, and this thread can still be running when the job is stored.
+		# _capturePrintJobData picks it up at the one moment where it is guaranteed to count.
+		self._logger.info(
+			"Highest temperature during the print - Bed: '" + str(highestBed) +
+			"' Tool " + toolId + ": '" + str(highestTool) + "'")
+		printJobModel.highestTemperatures = (highestBed, toolId, highestTool)
+
+
+	# The target is what the job asked for; actual only reaches it, and overshoots. Fall back
+	# to actual when a printer reports no target at all.
+	def _higherTemperature(self, currentHighest, currentTemps, sensorName):
+		if (sensorName not in currentTemps):
+			return currentHighest
+		temperature = currentTemps[sensorName].get("target")
+		if (temperature == None or temperature == 0):
+			temperature = currentTemps[sensorName].get("actual")
+		if (temperature == None):
+			return currentHighest
+		if (currentHighest == None or temperature > currentHighest):
+			return temperature
+		return currentHighest
 
 
 	def _readAndAssignCurrentTemperatureDelayed(self, printJobModel):
-		thread = threading.Thread(name='ReadCurrentTemperature',
-								  target=self._readCurrentTemperatureFromPrinterAsync,
-								  args=(self._printer, printJobModel, self._addTemperatureToPrintModel,))
+		# The delay setting keeps its meaning: nothing is sampled before it has passed, so a
+		# printer that reports garbage right after the start is still skipped.
+		delayInSeconds = self._settings.get_int([SettingsKeys.SETTINGS_KEY_DELAY_READING_TEMPERATURE_FROM_PRINTER])
+		toolId = self._settings.get([SettingsKeys.SETTINGS_KEY_DEFAULT_TOOL_ID])  # "tool0"
+		thread = threading.Thread(name='TrackHighestTemperature',
+								  target=self._trackHighestTemperatureAsync,
+								  args=(self._printer, printJobModel, toolId, delayInSeconds, 15,))
 		thread.daemon = True
 		thread.start()
 		pass
@@ -757,6 +822,149 @@ class PrintJobHistoryExtendedPlugin(
 		tempModel.sensorName = toolId  # "tool0"
 		tempModel.sensorValue = toolTemp if toolTemp != None else "-"
 		printJobModel.addTemperatureModel(tempModel)
+
+
+	# SpoolManagerExtended books the per-tool usage of a finished job a moment AFTER our own
+	# PRINT_DONE handler has stored it, so the stored usedLength is 0 on printers whose
+	# extrusion the odometer never sees. This event carries the booked numbers.
+	def _onSpoolUsageBookedByPeer(self, payload):
+		if (payload == None):
+			return
+
+		# The same event is fired for a spool change in the MIDDLE of a print (the
+		# selectSpool endpoint commits the odometer before switching), and there is no
+		# printStatus then. Booking that as a job end would count the partial usage twice
+		# once the print really finishes. A SpoolManagerExtended without the usage fields
+		# does not send printStatus either, so this doubles as the version check.
+		printStatus = payload.get("printStatus")
+		if (printStatus == None):
+			self._logger.info("Ignoring spool usage event without printStatus (spool change during a print, or a SpoolManagerExtended that does not report per-job usage yet)")
+			return
+
+		# A selected tool the job never used reports 0.0, not None, and fires an event like
+		# any other. Storing that would add empty tool rows to a multi-tool job.
+		usedLength = StringUtils.transformToFloatOrNone(payload.get("usedLength"))
+		if (usedLength == None or usedLength == 0.0):
+			self._logger.info("Ignoring spool usage event for tool '" + str(payload.get("toolId")) + "' without used filament")
+			return
+
+		with self._backfillLock:
+			databaseId = self._backfillTargetDatabaseId
+			printEndDateTime = self._backfillTargetPrintEndDateTime
+
+		if (databaseId == None):
+			self._logger.info("Received spool usage for tool '" + str(payload.get("toolId")) + "', but no print job is waiting for it")
+			return
+
+		if (printEndDateTime != None):
+			ageInSeconds = (datetime.datetime.now() - printEndDateTime).total_seconds()
+			if (ageInSeconds > PrintJobHistoryExtendedPlugin.BACKFILL_MAX_AGE_IN_SECONDS):
+				self._logger.warning("Spool usage arrived '" + str(ageInSeconds) + "' seconds after the print ended, too late to belong to it. Ignoring it.")
+				return
+
+		try:
+			self._backfillFilamentUsage(databaseId, payload)
+		except Exception as e:
+			self._logger.exception("Could not backfill the filament usage of print job '" + str(databaseId) + "': " + str(e))
+
+
+	# One event per tool, so this patches exactly one tool and then re-derives everything
+	# that depends on all of them. Values are assigned, never accumulated, so receiving the
+	# same event twice changes nothing.
+	def _backfillFilamentUsage(self, databaseId, payload):
+		toolId = "tool" + str(payload.get("toolId"))
+
+		printJobModel = self._databaseManager.loadPrintJob(databaseId)
+		if (printJobModel == None):
+			self._logger.warning("Could not backfill filament usage, print job '" + str(databaseId) + "' is gone")
+			return
+
+		# Always through getFilamentModelByToolId: it forces the per-instance model dict to
+		# be loaded before anything is changed.
+		filamentModel = printJobModel.getFilamentModelByToolId(toolId)
+		if (filamentModel == None):
+			filamentModel = FilamentModel()
+			filamentModel.toolId = toolId
+			printJobModel.addFilamentModel(filamentModel)
+
+		filamentModel.usedLength = StringUtils.transformToFloatOrNone(payload.get("usedLength"))
+		filamentModel.usedWeight = StringUtils.transformToFloatOrNone(payload.get("usedWeight"))
+		filamentModel.usedCost = StringUtils.transformToFloatOrNone(payload.get("usedCost"))
+
+		# usedWeight stays None when the spool carries no diameter/density. We may still be
+		# able to derive it from the spool data we captured before the peer booked - but only
+		# when both are known: _calculateFilamentWeightForLength returns 0.0 for a missing
+		# one, and storing 0.0 would claim "used nothing" where the truth is "unknown".
+		if (filamentModel.usedWeight == None and filamentModel.usedLength != None and
+			filamentModel.diameter != None and filamentModel.density != None):
+			filamentModel.usedWeight = self._calculateFilamentWeightForLength(filamentModel.usedLength,
+																			  filamentModel.diameter,
+																			  filamentModel.density)
+
+		self._recalculateTotalFilamentModel(printJobModel)
+		self._recalculateCostsInPlace(printJobModel)
+
+		self._databaseManager.updatePrintJob(printJobModel)
+		self._logger.info("Backfilled " + toolId + " of print job '" + str(databaseId) + "': usedLength='" + str(filamentModel.usedLength) + "'; usedWeight='" + str(filamentModel.usedWeight) + "'; usedCost='" + str(filamentModel.usedCost) + "' (source '" + str(payload.get("source")) + "')")
+
+		# Refresh the table and let an open dialog drop its "still measuring" hint. The
+		# dialog is not re-shown: it has no dirty tracking, so that would throw away
+		# anything the user has typed meanwhile.
+		self._sendDataToClient(dict(action="reloadTableItems"))
+		self._sendDataToClient(dict(action="filamentUsageArrived",
+									databaseId=databaseId,
+									printJobItem=TransformPrintJob2JSON.transformPrintJobModel(printJobModel, self._file_manager)))
+
+
+	# Re-derived from scratch on every backfill so that several per-tool events, in any
+	# order, converge on the same totals.
+	def _recalculateTotalFilamentModel(self, printJobModel):
+		totalFilamentModel = printJobModel.getFilamentModelByToolId("total")
+		if (totalFilamentModel == None):
+			return
+
+		usedTotalLength = None
+		usedTotalWeight = 0.0
+		usedTotalCost = 0.0
+		for filamentModel in printJobModel.getFilamentModels(withoutTotal=True):
+			if (filamentModel.usedLength == None):
+				continue
+			if (usedTotalLength == None):
+				usedTotalLength = 0.0
+			usedTotalLength = usedTotalLength + StringUtils.transformToFloatOrZero(filamentModel.usedLength)
+			usedTotalWeight = usedTotalWeight + StringUtils.transformToFloatOrZero(filamentModel.usedWeight)
+			usedTotalCost = usedTotalCost + StringUtils.transformToFloatOrZero(filamentModel.usedCost)
+
+		if (usedTotalLength != None):
+			totalFilamentModel.usedLength = usedTotalLength
+			totalFilamentModel.usedWeight = usedTotalWeight
+			totalFilamentModel.usedCost = usedTotalCost
+
+
+	# _addCostsToPrintModel() cannot be reused for a backfill: it always builds a NEW
+	# CostModel, and CostModel.printJob is unique, so the second row would fail and roll the
+	# whole transaction back - losing the usage as well. Printer and electricity cost are
+	# pure functions of the unchanged print window and come out identical.
+	def _recalculateCostsInPlace(self, printJobModel):
+		printTimeInSeconds = DateTimeUtils.calcDurationInSeconds(printJobModel.printEndDateTime,
+																 printJobModel.printStartDateTime)
+		allFilamentModels = printJobModel.getFilamentModels(withoutTotal=True)
+		costData = self._calculateCostData(allFilamentModels, printTimeInSeconds,
+										   printJobModel.printStartDateTime, printJobModel.printEndDateTime)
+
+		costModel = printJobModel.getCosts()
+		if (costModel == None):
+			costModel = CostModel()
+			printJobModel.setCosts(costModel)
+
+		costModel.totalCosts = costData["totalCosts"]
+		costModel.filamentCost = costData["filamentCost"]
+		costModel.electricityCost = costData["electricityCost"]
+		costModel.electricityKwh = costData["electricityKwh"]
+		costModel.printerCost = costData["printerCost"]
+		costModel.costSource = costData["costSource"]
+		costModel.withDefaultSpoolValues = costData["withDefaultSpoolValues"]
+		self._logger.info("Recalculated costs after backfill: " + str(costData))
 
 
 	def _addCostsToPrintModel(self, printJobModel):
@@ -1038,6 +1246,13 @@ class PrintJobHistoryExtendedPlugin(
 		self._logger.info("PrintJob '" + payload["name"] + "' started!")
 
 		self.alreadyCanceled = False
+
+		# A new print invalidates the previous backfill window: a late usage event must
+		# neither land on the job before last nor on the job now running.
+		with self._backfillLock:
+			self._backfillTargetDatabaseId = None
+			self._backfillTargetPrintEndDateTime = None
+
 		self._createPrintJobModel(payload)
 
 	#### print job finished
@@ -1063,6 +1278,20 @@ class PrintJobHistoryExtendedPlugin(
 			if (printStatus == "success"):
 				captureThePrint = True
 
+		# Acknowledging an error on the printer makes some connectors report a start and a
+		# done within a few seconds. That is indistinguishable from a real print here, so it
+		# used to be stored as a successful one - complete with the after-print dialog.
+		# Filtering on duration is the only signal that separates the two.
+		if (captureThePrint == True):
+			minimumDuration = StringUtils.transformToFloatOrNone(
+				self._settings.get([SettingsKeys.SETTINGS_KEY_MINIMUM_PRINT_DURATION_IN_SECONDS]))
+			if (minimumDuration != None and minimumDuration > 0 and self._currentPrintJobModel != None
+				and self._currentPrintJobModel.printStartDateTime != None):
+				durationInSeconds = (datetime.datetime.now() - self._currentPrintJobModel.printStartDateTime).total_seconds()
+				if (durationInSeconds < minimumDuration):
+					self._logger.info("PrintJob not captured, because it only lasted '" + str(round(durationInSeconds, 1)) + "' seconds (minimum is '" + str(minimumDuration) + "')")
+					captureThePrint = False
+
 		databaseId = None
 		payLoadForClient = None
 		# capture the print
@@ -1086,6 +1315,14 @@ class PrintJobHistoryExtendedPlugin(
 					slicerSettings = SlicerSettingsParser(self._logger).extractSlicerSettings(selectedFile, slicerSettingsExpressions)
 					if (slicerSettings.settingsAsText != None and len(slicerSettings.settingsAsText) != 0):
 						self._currentPrintJobModel.slicerSettingsAsText = slicerSettings.settingsAsText
+
+			# - Temperatures, highest seen while printing (see _trackHighestTemperatureAsync)
+			highestTemperatures = self._currentPrintJobModel.highestTemperatures
+			if (highestTemperatures != None):
+				(highestBed, toolId, highestTool) = highestTemperatures
+				self._addTemperatureToPrintModel(self._currentPrintJobModel, highestBed, toolId, highestTool)
+			else:
+				self._logger.warning("No temperature was tracked during this print, storing none")
 
 			# - Image / Thumbnail
 			# Enrichment only: a print that happened must be recorded even when we cannot
@@ -1112,6 +1349,11 @@ class PrintJobHistoryExtendedPlugin(
 			if (databaseId == None):
 				self._logger.error("PrintJob not captured, see previous error log!")
 				return None
+
+			# This is the job SpoolManagerExtended's usage event will refer to
+			with self._backfillLock:
+				self._backfillTargetDatabaseId = databaseId
+				self._backfillTargetPrintEndDateTime = self._currentPrintJobModel.printEndDateTime
 			printJobItem = None
 			if self._settings.get_boolean([SettingsKeys.SETTINGS_KEY_SHOW_PRINTJOB_DIALOG_AFTER_PRINT]):
 
@@ -1140,9 +1382,13 @@ class PrintJobHistoryExtendedPlugin(
 					printJobItem = TransformPrintJob2JSON.transformPrintJobModel(printJobModel, self._file_manager)
 
 			# inform client for a reload (and show dialog)
+			# SpoolManagerExtended books the filament a moment after us, so the job is stored
+			# without it. Tell the client to expect it, otherwise the dialog just shows zeros
+			# with no hint that anything is still coming.
 			payLoadForClient = {
 				"action": "printFinished",
-				"printJobItem": printJobItem  # if present then the editor dialog is shown
+				"printJobItem": printJobItem,  # if present then the editor dialog is shown
+				"filamentUsagePending": self._isFilamentUsageStillExpected()
 			}
 			# self._sendDataToClient(payLoadForClient)
 			self._logger.info("----- ... End PrintJob captured! -----")
@@ -1164,6 +1410,16 @@ class PrintJobHistoryExtendedPlugin(
 			pass
 
 		return databaseId
+
+
+	# True while we expect SpoolManagerExtended to report the per-job usage by event. Only
+	# meaningful when its event actually carries that usage - an older version never sends
+	# it, and then waiting for it would be a promise we cannot keep.
+	def _isFilamentUsageStillExpected(self):
+		if (self._isSpoolManagerInstalledAndEnabled() == False):
+			return False
+		with self._backfillLock:
+			return self._backfillTargetDatabaseId != None
 
 
 	def _grabImage(self, payload):
@@ -1438,6 +1694,9 @@ class PrintJobHistoryExtendedPlugin(
 		elif Events.PRINT_CANCELLED == event:
 			self.alreadyCanceled = True
 			self._printJobFinished("canceled", payload)
+
+		elif "plugin_spoolmanagerextended_spool_weight_updated_after_print" == event:
+			self._onSpoolUsageBookedByPeer(payload)
 		pass
 
 
@@ -1537,6 +1796,7 @@ class PrintJobHistoryExtendedPlugin(
 		settings[SettingsKeys.SETTINGS_KEY_SHOW_PRINTJOB_DIALOG_AFTER_PRINT_JOB_ID] = None
 		settings[SettingsKeys.SETTINGS_KEY_SHOWPRINTJOBDIALOGAFTERPRINT_MODE] = SettingsKeys.KEY_SHOWPRINTJOBDIALOGAFTERPRINT_MODE_SUCCESSFUL
 		settings[SettingsKeys.SETTINGS_KEY_CAPTURE_PRINTJOBHISTORY_MODE] = SettingsKeys.KEY_CAPTURE_PRINTJOBHISTORY_MODE_SUCCESSFUL
+		settings[SettingsKeys.SETTINGS_KEY_MINIMUM_PRINT_DURATION_IN_SECONDS] = 30
 		# settings[SettingsKeys.SETTINGS_KEY_SELECTED_FILAMENTTRACKER_PLUGIN] = SettingsKeys.KEY_SELECTED_SPOOLMANAGER_PLUGIN
 		settings[SettingsKeys.SETTINGS_KEY_SELECTED_FILAMENTTRACKER_PLUGIN] = SettingsKeys.KEY_SELECTED_NONE_PLUGIN
 		settings[SettingsKeys.SETTINGS_KEY_NO_NOTIFICATION_FILAMENTTRACKERING_PLUGIN_SELECTION] = False

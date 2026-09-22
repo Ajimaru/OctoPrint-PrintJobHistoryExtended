@@ -381,6 +381,33 @@ $(function() {
         self.printJobForEditing = ko.observable();
         self.printJobForEditing(new PrintJobItem(printHistoryJobItems[0]));
 
+        // SpoolManagerExtended books the filament usage a moment after the job is stored,
+        // so the dialog can open before the numbers exist. This drives a small hint above
+        // the tabs; without it the zeros look like a result instead of a pending value.
+        self.isFilamentUsagePending = ko.observable(false);
+        self.filamentUsagePendingJobId = null;
+        self.filamentUsagePendingTimeoutId = null;
+
+        // Never leave the spinner running forever: an older SpoolManagerExtended never
+        // sends the usage, and a promise we cannot keep is worse than no hint at all.
+        self.startFilamentUsagePending = function(databaseId){
+            self.stopFilamentUsagePending();
+            self.filamentUsagePendingJobId = databaseId;
+            self.isFilamentUsagePending(true);
+            self.filamentUsagePendingTimeoutId = window.setTimeout(function(){
+                self.stopFilamentUsagePending();
+            }, 15000);
+        }
+
+        self.stopFilamentUsagePending = function(){
+            if (self.filamentUsagePendingTimeoutId != null){
+                window.clearTimeout(self.filamentUsagePendingTimeoutId);
+                self.filamentUsagePendingTimeoutId = null;
+            }
+            self.filamentUsagePendingJobId = null;
+            self.isFilamentUsagePending(false);
+        }
+
         self.printJobToShowAfterStartup = null;
         self.missingPluginDialogMessage = null;
         self.confirmMessageExtendedDialogData = null;
@@ -1032,9 +1059,30 @@ $(function() {
 
             if ("printFinished" == data.action){
                 self.printJobHistoryExtendedTableHelper.reloadItems();
+                if (data.filamentUsagePending == true && data.printJobItem != null){
+                    self.startFilamentUsagePending(data.printJobItem.databaseId);
+                } else {
+                    self.stopFilamentUsagePending();
+                }
                 if (data.printJobItem != null){
                     self.printJobToShowAfterStartup = data.printJobItem;
                     self.showPrintJobDetailsDialogAction(data.printJobItem, true);
+                }
+                return;
+            }
+
+            // The filament usage booked by SpoolManagerExtended has landed. Drop the hint and
+            // refresh the values in place. The dialog is NOT re-shown - it has no dirty
+            // tracking, so that would discard whatever the user has typed meanwhile.
+            if ("filamentUsageArrived" == data.action){
+                self.stopFilamentUsagePending();
+                if (data.printJobItem != null){
+                    var openJob = self.printJobForEditing();
+                    // loose compare on purpose: the id travels as a number here and may be
+                    // a string on the item, and a type mismatch would silently skip the refresh
+                    if (openJob != null && openJob.databaseId() == data.printJobItem.databaseId){
+                        self.printJobForEditing(new PrintJobItem(data.printJobItem));
+                    }
                 }
                 return;
             }

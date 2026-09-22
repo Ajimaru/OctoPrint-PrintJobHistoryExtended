@@ -31,6 +31,11 @@ class SettingsKeys():
 	KEY_CAPTURE_PRINTJOBHISTORY_MODE_ALWAYS = "always"
 	KEY_CAPTURE_PRINTJOBHISTORY_MODE_SUCCESSFUL = "successful"
 
+	# Prints shorter than this are not recorded at all. Acknowledging an error on the
+	# printer can produce a start/done pair of a few seconds that is indistinguishable
+	# from a real print otherwise. 0 records everything, as before.
+	SETTINGS_KEY_MINIMUM_PRINT_DURATION_IN_SECONDS = "minimumPrintDurationInSeconds"
+
 	# Filament tracking is no longer a choice between plugins, it is simply on when
 	# SpoolManagerExtended is present. The setting survives only to migrate old configs.
 	SETTINGS_KEY_SELECTED_FILAMENTTRACKER_PLUGIN = "selectedFilamentTrackerPlugin"
