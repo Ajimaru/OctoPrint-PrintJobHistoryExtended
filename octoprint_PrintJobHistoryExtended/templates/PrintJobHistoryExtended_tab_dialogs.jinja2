@@ -437,7 +437,7 @@
                             <div class="">
 
                                 <div class="row-fluid text-center">
-                                    <span data-bind="visible: loginStateViewModel.hasPermission(accessViewModel.permissions.PLUGIN_PRINTJOBHISTORY_EDIT_JOB)">
+                                    <span data-bind="visible: loginStateViewModel.hasPermission(accessViewModel.permissions.PLUGIN_PRINTJOBHISTORYEXTENDED_EDIT_JOB)">
                                         <span class="span5 text-left">
                                             <span data-bind="visible: !printJobEditDialog.webCamEnabled()">WebCam not enabled!</span>
                                             <button id="printJobHistoryExtended-captureButton" data-bind="visible: printJobEditDialog.webCamEnabled, click: printJobEditDialog.captureImage" class="btn btn-success">
@@ -508,7 +508,7 @@
                                     </div>
                                 </div>
 
-                                <div class="row" data-bind="visible: loginStateViewModel.hasPermission(accessViewModel.permissions.PLUGIN_PRINTJOBHISTORY_EDIT_JOB)">
+                                <div class="row" data-bind="visible: loginStateViewModel.hasPermission(accessViewModel.permissions.PLUGIN_PRINTJOBHISTORYEXTENDED_EDIT_JOB)">
                                     <div class="span6 text-center">
                                         <span class="input-prepend">
                                             <span class="btn fileinput-button">
@@ -537,7 +537,7 @@
             <div class="control-group">
                 <div class="controls row-fluid">
                     <span class="span6" style="text-align:left">
-                        <span data-bind="visible: loginStateViewModel.hasPermission(accessViewModel.permissions.PLUGIN_PRINTJOBHISTORY_DELETE_JOB)">
+                        <span data-bind="visible: loginStateViewModel.hasPermission(accessViewModel.permissions.PLUGIN_PRINTJOBHISTORYEXTENDED_DELETE_JOB)">
                             <button type="button" class="btn btn-danger" data-bind="visible:printJobForEditing().databaseId,
                                                                                     click: printJobEditDialog.deletePrintJobItem" >Delete</button>
                         </span>
@@ -555,9 +555,9 @@
 
                     </span>
                     <span class="span6 text-right">
-                        <button class="btn " data-bind="click: printJobEditDialog.abortPrintJobItem" style="text-align:right">Close</button>
+                        <button class="btn " data-bind="click: printJobEditDialog.abortPrintJobItem" style="text-align:right" title="Close without saving">Close</button>
 
-                        <span data-bind="visible: loginStateViewModel.hasPermission(accessViewModel.permissions.PLUGIN_PRINTJOBHISTORY_EDIT_JOB)">
+                        <span data-bind="visible: loginStateViewModel.hasPermission(accessViewModel.permissions.PLUGIN_PRINTJOBHISTORYEXTENDED_EDIT_JOB)">
                             <button class="btn btn-primary" data-bind="click: printJobEditDialog.savePrintJobItem" style="text-align:right">Save</button>
                         </span>
                     </span>

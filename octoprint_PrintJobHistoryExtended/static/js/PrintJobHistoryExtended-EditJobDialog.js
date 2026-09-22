@@ -22,6 +22,11 @@ function PrintJobHistoryExtendedEditDialog(){
 
     this.shouldPrintJobTableReload = false;
 
+    // Snapshot of the editable state, taken when the dialog opens. Closing compares
+    // against it so the user is warned before unsaved edits are thrown away.
+    this.unchangedFieldsSnapshot = null;
+    this.unchangedNoteSnapshot = null;
+
     var SHUTTER_DURATION = 4;   // in seconds
     var IMAGEDISPLAYMODE_SNAPSHOTIMAGE = "snapshotImage";
     var IMAGEDISPLAYMODE_VIDEOSTREAM = "videoStream";
@@ -298,6 +303,10 @@ function PrintJobHistoryExtendedEditDialog(){
         // Select first Tab
         $('a[href="#tab-pjhe-editjob-total"]').tab("show");
 
+        // Baseline for the unsaved-changes check. Taken last, so everything the dialog
+        // filled in above counts as "unchanged" and only the user's own edits show up.
+        self._takeChangeSnapshot();
+
         self.editPrintJobItemDialog.modal({
             //minHeight: function() { return Math.max($.fn.modal.defaults.maxHeight() - 80, 250); }
             keyboard: false,
@@ -312,18 +321,88 @@ function PrintJobHistoryExtendedEditDialog(){
 
     }
 
+    /////////////////////////////////////////////////////////////////////////////////////////////////// UNSAVED CHANGES
+    // The bound fields all live on the PrintJobItem as plain observables, so serializing
+    // it captures every one of them without listing them here - a new field in the dialog
+    // is covered automatically. The note lives in Quill, outside Knockout, so it needs its
+    // own snapshot.
+    this._takeChangeSnapshot = function(){
+        self.unchangedFieldsSnapshot = self._serializeEditableFields();
+        self.unchangedNoteSnapshot = self._serializeNote();
+    }
+
+    this._serializeEditableFields = function(){
+        if (self.printJobItemForEdit == null){
+            return null;
+        }
+        try {
+            return ko.toJSON(self.printJobItemForEdit);
+        } catch (error){
+            // Never let a serialization problem block closing the dialog.
+            console.warn("PrintJobHistoryExtended: could not snapshot dialog fields", error);
+            return null;
+        }
+    }
+
+    this._serializeNote = function(){
+        if (self.noteEditor == null){
+            return null;
+        }
+        try {
+            return JSON.stringify(self.noteEditor.getContents());
+        } catch (error){
+            console.warn("PrintJobHistoryExtended: could not snapshot note", error);
+            return null;
+        }
+    }
+
+    this.hasUnsavedChanges = function(){
+        // A snapshot that could not be taken means "unknown", and warning on every close
+        // would train the user to click it away. Stay silent instead.
+        if (self.unchangedFieldsSnapshot == null && self.unchangedNoteSnapshot == null){
+            return false;
+        }
+        if (self.unchangedFieldsSnapshot != null &&
+            self.unchangedFieldsSnapshot != self._serializeEditableFields()){
+            return true;
+        }
+        if (self.unchangedNoteSnapshot != null &&
+            self.unchangedNoteSnapshot != self._serializeNote()){
+            return true;
+        }
+        return false;
+    }
+
     /////////////////////////////////////////////////////////////////////////////////////////////////// CLOSE DIALOG
+    // Forced close, triggered by the server rather than the user. No prompt here: the
+    // dialog is being taken away regardless, and a confirm nobody asked for would just
+    // hang on screen.
     this.closeDialog = function(){
         var visible = self.editPrintJobItemDialog.hasClass('in');
         if (visible == true){
+            self._discardChangeSnapshot();
             self.editPrintJobItemDialog.modal('hide');
         }
     }
 
     /////////////////////////////////////////////////////////////////////////////////////////////////// ABORT PRINT JOB ITEM
     this.abortPrintJobItem  = function(){
+        if (self.hasUnsavedChanges() == true){
+            var discard = confirm("There are unsaved changes.\n\nDiscard them and close the dialog?");
+            if (discard != true){
+                return;
+            }
+        }
+        self._discardChangeSnapshot();
         self.editPrintJobItemDialog.modal('hide');
         self.closeDialogHandler(self.shouldPrintJobTableReload);
+    }
+
+    // Drop the baseline once the dialog is on its way out, so a later close path cannot
+    // compare against a stale job.
+    this._discardChangeSnapshot = function(){
+        self.unchangedFieldsSnapshot = null;
+        self.unchangedNoteSnapshot = null;
     }
 
     /////////////////////////////////////////////////////////////////////////////////////////////////// SAVE PRINT JOB ITEM
@@ -368,6 +447,8 @@ function PrintJobHistoryExtendedEditDialog(){
         }
 
         self.apiClient.callStorePrintJob(self.printJobItemForEdit.databaseId(), self.printJobItemForEdit, function(allPrintJobsResponse){
+            // Saved, so there is nothing left to warn about.
+            self._discardChangeSnapshot();
             self.editPrintJobItemDialog.modal('hide');
             self.closeDialogHandler(true);
         });
@@ -379,6 +460,8 @@ function PrintJobHistoryExtendedEditDialog(){
         var result = confirm("Do you really want to delete the print job?");
         if (result == true){
             self.apiClient.callRemovePrintJob(self.printJobItemForEdit.databaseId(), function(responseData) {
+                // The job is gone - warning about unsaved edits to it would be absurd.
+                self._discardChangeSnapshot();
                 self.editPrintJobItemDialog.modal('hide');
                 self.closeDialogHandler(true);
             });
@@ -394,7 +477,15 @@ function PrintJobHistoryExtendedEditDialog(){
     self.tooltipForSelection = ko.observable("");
 
     this.selectForPrinting = function(){
+        // This closes the dialog too, so unsaved edits would be lost just as silently.
+        if (self.hasUnsavedChanges() == true){
+            var discard = confirm("There are unsaved changes.\n\nDiscard them and select this file for printing?");
+            if (discard != true){
+                return;
+            }
+        }
         self.apiClient.callSelectPrintJobForPrinting(self.printJobItemForEdit.databaseId(), function(responseData) {
+            self._discardChangeSnapshot();
             self.editPrintJobItemDialog.modal('hide');
             self.closeDialogHandler(true);
         });
