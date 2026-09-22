@@ -1072,8 +1072,8 @@ $(function() {
             }
 
             // The filament usage booked by SpoolManagerExtended has landed. Drop the hint and
-            // refresh the values in place. The dialog is NOT re-shown - it has no dirty
-            // tracking, so that would discard whatever the user has typed meanwhile.
+            // refresh the values in place. The dialog is NOT re-shown, that would pull the
+            // focus away from whoever is typing in it.
             if ("filamentUsageArrived" == data.action){
                 self.stopFilamentUsagePending();
                 if (data.printJobItem != null){
@@ -1081,7 +1081,16 @@ $(function() {
                     // loose compare on purpose: the id travels as a number here and may be
                     // a string on the item, and a type mismatch would silently skip the refresh
                     if (openJob != null && openJob.databaseId() == data.printJobItem.databaseId){
-                        self.printJobForEditing(new PrintJobItem(data.printJobItem));
+                        // Replacing the item would overwrite edits made while the backfill was
+                        // in flight. The usage values are worth less than the user's typing, so
+                        // keep what is on screen and let the table show the booked numbers.
+                        if (self.printJobEditDialog.hasUnsavedChanges() == true){
+                            self.printJobHistoryExtendedTableHelper.reloadItems();
+                        } else {
+                            self.printJobForEditing(new PrintJobItem(data.printJobItem));
+                            self.printJobEditDialog.printJobItemForEdit = self.printJobForEditing();
+                            self.printJobEditDialog._takeChangeSnapshot();
+                        }
                     }
                 }
                 return;
