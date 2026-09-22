@@ -170,6 +170,13 @@ function PrintJobHistoryExtendedAPIClient(pluginId, baseUrl) {
             type: "GET"
         }).done(function( data ){
             responseHandler(data)
+        }).fail(function(jqXHR){
+            // This runs on every page load, but the data behind it belongs to the settings
+            // dialog and needs the SETTINGS permission. A user without it simply gets no
+            // numbers there - that is expected, not an error worth shouting about.
+            if (jqXHR.status != 403){
+                console.warn("PrintJobHistoryExtended: could not load database metadata", jqXHR.status);
+            }
         });
     }
 
