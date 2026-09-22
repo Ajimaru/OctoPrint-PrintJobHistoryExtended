@@ -735,10 +735,16 @@ class PrintJobHistoryExtendedPlugin(
 		self._currentPrintJobModel.filePathName = payload["path"]
 
 		# self._file_manager.path_on_disk()
-		if "owner" in payload:
-			self._currentPrintJobModel.userName = payload["owner"]
-		else:
-			self._currentPrintJobModel.userName = "John Doe"
+		# OctoPrint only puts "owner" in the payload when the job actually has one, and
+		# "user" only when a user triggered the action. A print started at the printer
+		# itself - the normal case for a connector printer like Bambu - has neither.
+		# Leave the name empty then instead of inventing one: the edit dialog fills in the
+		# current user on save, and a placeholder name would defeat that and claim someone
+		# printed this who did not.
+		userName = payload.get("owner")
+		if (StringUtils.isEmpty(userName) == True):
+			userName = payload.get("user")
+		self._currentPrintJobModel.userName = userName if StringUtils.isNotEmpty(userName) else None
 		self._currentPrintJobModel.fileSize = payload["size"]
 
 		# readTemperatureFromPrinter
