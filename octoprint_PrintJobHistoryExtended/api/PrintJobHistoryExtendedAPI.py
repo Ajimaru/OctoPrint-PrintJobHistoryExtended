@@ -47,6 +47,36 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
     def is_blueprint_csrf_protected(self):
         return True
 
+    def get_blueprint(self):
+        """Blueprint as built by OctoPrint, plus a leak detector.
+
+        It only WARNS, it never closes: the CSV export streams its response after the view
+        has returned, so closing here would cut the download off mid-file. Connections are
+        released in DatabaseManager._connectionScope; this just makes a future regression
+        show up as a log line instead of as HTTP 500s weeks later.
+        """
+        blueprint = super(PrintJobHistoryExtendedAPI, self).get_blueprint()
+        if (blueprint == None or getattr(self, "_connectionLeakCheckRegistered", False) == True):
+            return blueprint
+
+        self._connectionLeakCheckRegistered = True
+
+        @blueprint.teardown_request
+        def _warnOnUnreleasedConnection(error):
+            try:
+                databaseManager = getattr(self, "_databaseManager", None)
+                if (databaseManager == None):
+                    return
+                depth = getattr(databaseManager._connectionDepth, "value", 0)
+                if (depth != 0):
+                    self._logger.warning(
+                        "A database connection scope was still open at the end of the request"
+                        " (depth " + str(depth) + "). This leaks a pool slot.")
+            except Exception:
+                pass    # a diagnostic must never break the request
+
+        return blueprint
+
     def _updatePrintJobFromJson(self, printJobModel,  jsonData):
         # transfer header values
         printJobModel.userName = self._getValueFromJSONOrNone("userName", jsonData)

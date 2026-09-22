@@ -123,9 +123,14 @@ class PrintJobModel(BaseModel):
 		pass
 
 	def getTemperatureModels(self):
-		if (self.allTemperatures == None):
-			self.allTemperatures = []
+		# Memoised, because this used to append the database rows again on EVERY call:
+		# reading the temperatures twice returned each of them twice. Priming the cache
+		# before the connection is handed back (see DatabaseManager) calls this a second
+		# time, which would have doubled every temperature in the dialog.
+		if (self.allTemperatures != None):
+			return self.allTemperatures
 
+		self.allTemperatures = []
 		tempAssos = self._getTemperatureModelsFromAsso()
 		for temps in tempAssos:
 			self.allTemperatures.append(temps)

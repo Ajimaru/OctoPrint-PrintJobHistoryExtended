@@ -9,6 +9,7 @@ import re
 import shutil
 import sqlite3
 import threading
+from contextlib import contextmanager
 
 from octoprint_PrintJobHistoryExtended.WrappedLoggingHandler import WrappedLoggingHandler
 from octoprint_PrintJobHistoryExtended.api import TransformPrintJob2JSON
@@ -40,6 +41,18 @@ CURRENT_DATABASE_SCHEME_VERSION = 10
 FIRST_PORTABLE_SCHEME_VERSION = 8
 
 # MySQL error codes / messages that mean "the connection is gone, reconnecting will fix it"
+# Loading this many jobs into memory at once is legitimate for the export and report
+# paths, but worth a line in the log - it is the first thing to look at if the server
+# starts running out of memory.
+MATERIALIZE_WARNING_THRESHOLD = 20000
+
+# Slots in the MySQL connection pool, and how long a thread waits for a free one before
+# giving up. Queries are short, so a burst of parallel requests queues briefly instead of
+# failing; the timeout only exists so a genuinely stuck connection cannot hang a request
+# for ever.
+POOL_MAX_CONNECTIONS = 16
+POOL_WAIT_TIMEOUT_IN_SECONDS = 10
+
 LOST_CONNECTION_ERROR_CODES = (2006, 2013, 2055)
 LOST_CONNECTION_MESSAGES = ("server has gone away", "lost connection", "broken pipe")
 
@@ -99,6 +112,12 @@ class DatabaseManager(object):
 		self._schemeUpgradeNeeded = False
 		# Guards copyPrintJobDataToExternalDatabase against running twice at the same time.
 		self._copyDatabaseLock = threading.Lock()
+		# Serialises rebuilds of self._database, so two threads cannot swap the object
+		# (and close the outgoing pool) at the same time.
+		self._connectionRebuildLock = threading.RLock()
+		# Per-thread nesting depth of _connectionScope. peewee keeps its connection state
+		# in threading.local, so the depth has to be per-thread as well.
+		self._connectionDepth = threading.local()
 
 	################################################################################################## private functions
 
@@ -641,6 +660,93 @@ class DatabaseManager(object):
 		return False
 
 
+	def _closeDatabaseObject(self, database):
+		"""Hand every connection of this database object back.
+
+		A pool's plain close() only returns the CALLING thread's connection; the ones other
+		threads checked out stay open and the object keeps them even after it is replaced.
+		close_all() is what actually empties it. Plain Sqlite/MySQL objects have no such
+		method, hence the fallback.
+		"""
+		if (database == None):
+			return
+		try:
+			closeAll = getattr(database, "close_all", None)
+			if (closeAll != None):
+				closeAll()
+			else:
+				database.close()
+		except Exception as e:
+			self._logger.warning("Could not close database connection: " + str(e))
+
+
+	@contextmanager
+	def _connectionScope(self):
+		"""Hold a connection for the duration of the block, then give it back to the pool.
+
+		Without this every worker thread keeps the slot it once checked out - peewee stores
+		the connection in threading.local and autoconnect opens one silently - so the pool
+		runs dry after max_connections threads have touched the database.
+
+		Re-entrant: only the outermost scope on a thread closes. Nested calls
+		(calculatePrintJobsStatisticByQuery -> loadPrintJobsByQuery) therefore share one
+		connection instead of the inner one closing it under the outer one's feet.
+
+		The database object is captured once on entry and only that local is used to close.
+		Re-reading self._database in the finally would close a slot on the wrong object
+		after a concurrent reconnect replaced it.
+		"""
+		if (self._database == None):
+			self.connectToDatabase()
+		database = self._database
+		if (database == None):
+			# Nothing to hold open - let the operation fail with its own error.
+			yield
+			return
+
+		depth = getattr(self._connectionDepth, "value", 0)
+		self._connectionDepth.value = depth + 1
+		try:
+			if (depth == 0 and database.is_closed() == True):
+				database.connect(reuse_if_open=True)
+			yield
+		finally:
+			self._connectionDepth.value = depth
+			if (depth == 0):
+				try:
+					# close() raises while a transaction is open, which would bury the real
+					# exception on a rollback path.
+					if (database.is_closed() == False and database.in_transaction() == False):
+						database.close()
+				except Exception as e:
+					self._logger.debug("Could not return the connection to the pool: " + str(e))
+
+
+	def _materializePrintJobs(self, query, operationName):
+		"""Run the query and pull everything it needs while the connection is still held.
+
+		Returning peewee's lazy ModelSelect made the caller trigger the query AFTER the
+		connection had gone back to the pool. Worse, transformPrintJobModel reaches for
+		filaments, temperatures and costs per job, so a page of N jobs fired 3N more
+		queries outside any scope. Priming those caches here keeps all of it inside.
+		"""
+		allPrintJobs = list(query)
+
+		if (len(allPrintJobs) > MATERIALIZE_WARNING_THRESHOLD):
+			self._logger.warning(
+				"'" + operationName + "' loaded " + str(len(allPrintJobs))
+				+ " print jobs into memory (threshold " + str(MATERIALIZE_WARNING_THRESHOLD) + ")")
+
+		for printJob in allPrintJobs:
+			# Each of these memoises on the model, so the later call in the transformer
+			# is a cache hit rather than another round trip.
+			printJob.getFilamentModels()
+			printJob.getTemperatureModels()
+			printJob.getCosts()
+
+		return allPrintJobs
+
+
 	def _executeWithRetry(self, operation, operationName):
 		"""Run a database operation, reconnecting once if the connection was lost.
 
@@ -648,9 +754,14 @@ class DatabaseManager(object):
 		block: the server rolls an interrupted transaction back, so the retry is a clean
 		re-run rather than a partial duplicate. Never use this around a multi-statement
 		sequence that is not inside a transaction.
+
+		The connection scope sits INSIDE each attempt on purpose: a scope around the retry
+		would capture the database object from before the reconnect and then close a slot
+		on the object that was just thrown away.
 		"""
 		try:
-			return operation()
+			with self._connectionScope():
+				return operation()
 		except (OperationalError, InterfaceError) as e:
 			if (not self._isLostConnection(e)):
 				raise
@@ -660,7 +771,8 @@ class DatabaseManager(object):
 			except Exception:
 				pass	# the connection is gone anyway
 			self.connectToDatabase()
-			return operation()
+			with self._connectionScope():
+				return operation()
 
 
 	def _sanitizeRowForStrictDatabase(self, model, rowDict):
@@ -719,14 +831,21 @@ class DatabaseManager(object):
 
 		# Pooled, because stale_timeout recycles connections before MySQL's wait_timeout (or a
 		# router's NAT timeout) drops them, which is the usual "MySQL server has gone away".
+		#
+		# timeout is what keeps a burst of parallel requests from failing: without it peewee
+		# raises MaxConnectionsExceeded the moment all slots are busy, even though they are
+		# handed back microseconds later. With it the thread waits for a free slot instead.
+		# Only works because _connectionScope actually returns connections - a waiter would
+		# otherwise just wait out the timeout.
 		return PooledMySQLDatabase(
 			databaseSettings.name,
 			user=databaseSettings.user,
 			password=databaseSettings.password,
 			host=databaseSettings.host,
 			port=int(databaseSettings.port),
-			max_connections=8,
+			max_connections=POOL_MAX_CONNECTIONS,
 			stale_timeout=280,
+			timeout=POOL_WAIT_TIMEOUT_IN_SECONDS,
 			charset="utf8mb4"
 		)
 
@@ -734,10 +853,17 @@ class DatabaseManager(object):
 	def connectToDatabase(self, sendErrorPopUp=True):
 		"""(Re)build the connection from the current settings and bind the models to it."""
 		try:
-			self._database = self._buildDatabaseConnection()
-			DatabaseManager.db = self._database
-			self._database.bind(MODELS)
-			self._database.connect(reuse_if_open=True)
+			with self._connectionRebuildLock:
+				# The outgoing object still owns every socket its pool handed out, and
+				# nothing collects those once the reference is dropped - so close it
+				# explicitly instead of leaking a whole pool per reconnect.
+				previousDatabase = self._database
+				self._database = self._buildDatabaseConnection()
+				DatabaseManager.db = self._database
+				self._database.bind(MODELS)
+				self._database.connect(reuse_if_open=True)
+				if (previousDatabase != None and previousDatabase is not self._database):
+					self._closeDatabaseObject(previousDatabase)
 			return True
 		except Exception as e:
 			self._logger.error("Could not connect to database " + str(self._databaseSettings))
@@ -749,11 +875,9 @@ class DatabaseManager(object):
 
 
 	def closeDatabase(self):
-		if (self._database != None):
-			try:
-				self._database.close()
-			except Exception as e:
-				self._logger.warning("Could not close database connection: " + str(e))
+		# close_all(), not close(): see _closeDatabaseObject. on_settings_save closes and
+		# rebuilds the database, so a plain close() here leaked a pool per settings save.
+		self._closeDatabaseObject(self._database)
 
 
 	def isExternalDatabase(self):
@@ -1025,6 +1149,10 @@ class DatabaseManager(object):
 		hold the print jobs of other OctoPrint instances. Only the tables that do not exist
 		yet are created.
 
+		Deliberately NOT wrapped in _connectionScope: this manages its own connections and
+		swaps self._database while it runs, so a scope would capture and close the wrong
+		object. _copyDatabaseLock already serialises it.
+
 		Snapshot images are files on this instance and are not copied.
 		"""
 		result = {
@@ -1231,6 +1359,14 @@ class DatabaseManager(object):
 
 	#
 	def calculatePrintJobsStatisticByQuery(self, tableQuery):
+		# The scope nests with the one inside loadPrintJobsByQuery below - that is exactly
+		# the case _connectionScope's depth counter exists for: the inner scope must not
+		# hand the connection back while this method is still walking the results.
+		with self._connectionScope():
+			return self._calculatePrintJobsStatisticByQuery(tableQuery)
+
+
+	def _calculatePrintJobsStatisticByQuery(self, tableQuery):
 
 		printJobCount = 0
 		duration = 0
@@ -1443,7 +1579,9 @@ class DatabaseManager(object):
 		# 		myQuery = myQuery.where( ( ( PrintJobModel.printStartDateTime > startDateTime) & ( PrintJobModel.printStartDateTime < endDateTime))
 		# 								 )
 
-		return myQuery
+		return self._executeWithRetry(
+			lambda: self._materializePrintJobs(myQuery, "loadPrintJobsByQuery"),
+			"loadPrintJobsByQuery")
 
 
 
@@ -1517,11 +1655,17 @@ class DatabaseManager(object):
 		for dbId in selectedDatabaseIdsSplitted:
 			databaseArray.append(dbId)
 
-		return PrintJobModel.select().where(PrintJobModel.databaseId << databaseArray).order_by(PrintJobModel.printStartDateTime.desc())
+		myQuery = PrintJobModel.select().where(PrintJobModel.databaseId << databaseArray).order_by(PrintJobModel.printStartDateTime.desc())
+		return self._executeWithRetry(
+			lambda: self._materializePrintJobs(myQuery, "loadSelectedPrintJobs"),
+			"loadSelectedPrintJobs")
 
 
 	def loadAllPrintJobs(self):
-		return PrintJobModel.select().order_by(PrintJobModel.printStartDateTime.desc())
+		myQuery = PrintJobModel.select().order_by(PrintJobModel.printStartDateTime.desc())
+		return self._executeWithRetry(
+			lambda: self._materializePrintJobs(myQuery, "loadAllPrintJobs"),
+			"loadAllPrintJobs")
 
 		# return PrintJobModel.select().offset(offset).limit(limit).order_by(PrintJobModel.printStartDateTime.desc())
 		# all = PrintJobModel.select().join(FilamentModel).switch(PrintJobModel).join(TemperatureModel).order_by(PrintJobModel.printStartDateTime.desc())
