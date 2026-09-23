@@ -8,6 +8,12 @@
 
     var self = this;
 
+    // "all" used to be turned into the current totalItemCount, which is still 0 when a
+    // stored "all" gets applied during startup - the table then asked for zero rows.
+    function _toPageSize(selectedPageSize){
+        return "all" == selectedPageSize ? 0 : parseInt(selectedPageSize, 10);
+    }
+
     self.loadItemsFunction = loadItemsFunction;
     self.items = ko.observableArray([]);
     self.totalItemCount = ko.observable(0);
@@ -18,7 +24,8 @@
     // paging
     self.pageSizeOptions = ko.observableArray([10, 25, 50, 100, "all"])
     self.selectedPageSize = ko.observable(defaultPageSize)
-    self.pageSize = ko.observable(self.selectedPageSize());
+    // pageSize 0 stands for "all": the pager below already treats 0 as a single page
+    self.pageSize = ko.observable(_toPageSize(defaultPageSize));
     self.currentPage = ko.observable(0);
     // Sorting
     self.sortColumn = ko.observable(defaultSortColumn);
@@ -62,11 +69,8 @@
 
     self.getTableQuery = function(){
         var from = Math.max(self.currentPage() * self.pageSize(), 0);
-//        var to = Math.min(from + self.pageSize(), self.totalItemCount());
-        var to = self.pageSize();
-        if (to == 0){
-            to = self.pageSize();
-        }
+        // same "no limit" value the backend uses for its own full-table queries
+        var to = self.pageSize() === 0 ? 999999 : self.pageSize();
         var tableQuery = {
             "from": from,
             "to": to,
@@ -87,11 +91,7 @@
 
     self.selectedPageSize.subscribe(function(newPageSize) {
         self.currentPage(0);
-        if ("all" == newPageSize){
-            self.pageSize(self.totalItemCount());
-        } else {
-            self.pageSize(newPageSize);
-        }
+        self.pageSize(_toPageSize(newPageSize));
         self._loadItems()
     });
 
@@ -108,15 +108,13 @@
     self.paginatedItems = ko.dependentObservable(function() {
         if (self.items() === undefined) {
             return [];
-        } else if (self.pageSize() === 0) {
-            return self.items();
-        } else {
-            if (self.isInitialLoadDone == false){
-                self.isInitialLoadDone = true;
-                self._loadItems();
-            }
-            return self.items();
         }
+        // the initial load must not depend on the page size, "all" (0) skipped it before
+        if (self.isInitialLoadDone == false){
+            self.isInitialLoadDone = true;
+            self._loadItems();
+        }
+        return self.items();
     });
     // ############################################## SORTING
     self.changeSortOrder = function(newSortColumn){
@@ -188,7 +186,7 @@
         }
     };
     self.lastPage = ko.dependentObservable(function() {
-        return (self.pageSize() === 0 ? 1 :
+        return (self.pageSize() === 0 ? 0 :
                 Math.ceil(self.totalItemCount() / self.pageSize()) - 1);
     });
 

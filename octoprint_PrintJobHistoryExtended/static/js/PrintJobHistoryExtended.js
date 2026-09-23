@@ -457,7 +457,8 @@ $(function() {
                 // damn!!!
                 return false;
             }
-            var storageKey = "pjh.table.selectedPageSize";
+            // "pjhe.", not "pjh.": the original PrintJobHistory uses "pjh." on the same origin
+            var storageKey = "pjhe.table.selectedPageSize";
             if (localStorage[storageKey] == null){
                 localStorage[storageKey] = "25"; // default page size
             } else {
@@ -1195,7 +1196,7 @@ $(function() {
             }
 
             assignVisibility = function(attributeName){
-                var storageKey = "pjh.table.visible." + attributeName;
+                var storageKey = "pjhe.table.visible." + attributeName;
                 if (localStorage[storageKey] == null){
                     localStorage[storageKey] = true
                 } else {
