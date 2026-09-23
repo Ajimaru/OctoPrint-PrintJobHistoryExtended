@@ -36,7 +36,7 @@ jobs:
           fi
 
       - run: echo "Build ZIP"
-      - run: zip -r main.zip * -i '\octoprint_*' 'translations' 'README.md' 'requirements.txt' 'setup.py'
+      - run: zip -r main.zip * -i '\octoprint_*' 'translations' 'README.md' 'requirements.txt' 'setup.py' 'LICENSE.txt' 'THIRD_PARTY_NOTICES.md' '3rdPartySoftware/*'
 
       - name: List files in the repository
         run: ls ${{ github.workspace }}

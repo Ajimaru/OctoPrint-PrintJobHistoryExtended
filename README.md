@@ -3,9 +3,11 @@
 [![Version](https://img.shields.io/badge/dynamic/json.svg?color=brightgreen&label=version&url=https://api.github.com/repos/Ajimaru/OctoPrint-PrintJobHistoryExtended/releases&query=$[0].name)]()
 [![Released](https://img.shields.io/badge/dynamic/json.svg?color=brightgreen&label=released&url=https://api.github.com/repos/Ajimaru/OctoPrint-PrintJobHistoryExtended/releases&query=$[0].published_at)]()
 ![GitHub Releases (by Release)](https://img.shields.io/github/downloads/Ajimaru/OctoPrint-PrintJobHistoryExtended/latest/total.svg)
+[![License][badge-license]](LICENSE.txt)
 [![Python][badge-python]](https://python.org)
 [![OctoPrint][badge-octoprint]](https://octoprint.org)
 
+[badge-license]: https://img.shields.io/github/license/Ajimaru/OctoPrint-PrintJobHistoryExtended?style=flat-square
 [badge-python]: https://img.shields.io/badge/python-3.11%2B-blue.svg?style=flat-square
 [badge-octoprint]: https://img.shields.io/badge/OctoPrint-2.0.0%2B-blue.svg?style=flat-square
 
@@ -125,3 +127,9 @@ TBD. Critical bug fixes for starters. Submit issues to the repo [here](https://g
 ## Versions
 
 see [Release-Overview](https://github.com/Ajimaru/OctoPrint-PrintJobHistoryExtended/releases/)
+
+## License
+
+AGPLv3 — see [LICENSE.txt](LICENSE.txt).
+
+The bundled JavaScript libraries (Quill, Day.js, jQuery DateTimePicker) keep their own licenses — see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

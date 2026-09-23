@@ -14,7 +14,7 @@ plugin_package = "octoprint_PrintJobHistoryExtended"
 plugin_name = "Print Job History Extended"
 
 # The plugin's version. Can be overwritten within OctoPrint's internal data via __plugin_version__ in the plugin module
-plugin_version = "1.18.0.dev30"
+plugin_version = "1.18.0.dev32"
 
 # The plugin's description. Can be overwritten within OctoPrint's internal data via __plugin_description__ in the plugin
 # module
@@ -39,10 +39,10 @@ plugin_license = "AGPLv3"
 # candidates, which pip only considers when the requirement explicitly admits one.
 plugin_requires = [
 	"OctoPrint>=2.0.0rc1",
-	"pillow",
-	"peewee>=3.14,<5",
-	"pymysql",		# mysql driver, pure python so it needs no compiler on a Raspberry Pi
-	"cryptography"	# needed by pymysql for MySQL 8's default caching_sha2_password auth
+	"pillow>=11",
+	"peewee>=3.17,<5",
+	"pymysql>=1.1.1",	# mysql driver, pure python so it needs no compiler on a Raspberry Pi; 1.1.1 fixes CVE-2024-36039
+	"cryptography>=44"	# needed by pymysql for MySQL 8's default caching_sha2_password auth
 ]
 ### --------------------------------------------------------------------------------------------------------------------
 ### More advanced options that you usually shouldn't have to touch follow after this point
