@@ -1,4 +1,7 @@
 include README.md
+include LICENSE.txt
+include THIRD_PARTY_NOTICES.md
+recursive-include 3rdPartySoftware *
 recursive-include octoprint_PrintJobHistoryExtended/templates *
 recursive-include octoprint_PrintJobHistoryExtended/translations *
 recursive-include octoprint_PrintJobHistoryExtended/static *

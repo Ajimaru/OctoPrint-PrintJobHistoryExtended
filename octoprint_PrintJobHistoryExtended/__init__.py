@@ -1898,7 +1898,6 @@ class PrintJobHistoryExtendedPlugin(
 		# Define your plugin's asset files to automatically include in the
 		# core UI here.
 		return dict(
-			# "js/ulog.full.min.js",
 			js=[
 				"js/PrintJobHistoryExtended.js",
 				"js/PrintJobHistoryExtended-APIClient.js",

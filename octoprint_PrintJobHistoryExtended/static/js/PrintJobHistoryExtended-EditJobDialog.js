@@ -104,9 +104,6 @@ function PrintJobHistoryExtendedEditDialog(){
             },
             theme: 'snow'
         });
-        Quill.prototype.getHtml = function() {
-            return this.container.querySelector('.ql-editor').innerHTML;
-        };
 
         // INIT FileUpload
         self.snapshotUploadData = undefined;    // data with submit function
@@ -433,7 +430,10 @@ function PrintJobHistoryExtendedEditDialog(){
 
         var noteText = self.noteEditor.getText();
         var noteDeltaFormat = self.noteEditor.getContents();
-        var noteHtml = self.noteEditor.getHtml();
+        // Quill 2 keeps every list as <ol> internally and only tells bullets apart through
+        // data-list, so the raw editor innerHTML would show bullet lists numbered wherever
+        // the Quill stylesheet does not apply (the note column in the job table).
+        var noteHtml = self.noteEditor.getSemanticHTML();
         self.printJobItemForEdit.noteText(noteText);
         self.printJobItemForEdit.noteDeltaFormat(noteDeltaFormat);
         self.printJobItemForEdit.noteHtml(noteHtml);
