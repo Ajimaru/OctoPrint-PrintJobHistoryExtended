@@ -51,8 +51,15 @@ class PrintJobModel(BaseModel):
 	# 	print("PrintJobModel.initialize")
 	# 	pass
 
+	# A job that was never saved cannot have child rows yet. Reading its backrefs would
+	# still fire a query - one that runs outside any connection scope of the
+	# DatabaseManager. During the capture that meant a dead pooled connection took the
+	# whole print job down before it was ever stored.
+	def _isPersisted(self):
+		return self.get_id() != None
+
 	def getCosts(self):
-		if (self.costModel == None):
+		if (self.costModel == None and self._isPersisted() == True):
 			# load costs from database
 			if (self.costs != None and len(self.costs) > 0):
 				self.costModel = self.costs[0]
@@ -103,6 +110,8 @@ class PrintJobModel(BaseModel):
 	def _loadFilamentModels(self):
 		# clear and build up
 		self.filamentModelsByToolId = {}
+		if (self._isPersisted() == False):
+			return
 		# load from database
 		allFilaments = self._getFilamentModelsFromAsso()
 		if (allFilaments != None and len(allFilaments) > 0):
@@ -131,6 +140,8 @@ class PrintJobModel(BaseModel):
 			return self.allTemperatures
 
 		self.allTemperatures = []
+		if (self._isPersisted() == False):
+			return self.allTemperatures
 		tempAssos = self._getTemperatureModelsFromAsso()
 		for temps in tempAssos:
 			self.allTemperatures.append(temps)
