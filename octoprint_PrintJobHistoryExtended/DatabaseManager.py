@@ -880,6 +880,30 @@ class DatabaseManager(object):
 		self._closeDatabaseObject(self._database)
 
 
+	def releaseThreadConnection(self):
+		"""Give back a connection this thread holds outside any _connectionScope.
+
+		peewee's autoconnect opens a connection silently for any query that runs outside a
+		scope, and the thread then keeps it in threading.local for ever. On a long-lived
+		thread like OctoPrint's event dispatcher that connection idles for hours until MySQL
+		(or a router) drops it, and the next query on the thread fails with "server has gone
+		away". Returning it to the pool means the next checkout gets a pinged, live one.
+
+		A no-op while a scope is active on this thread or a transaction is open.
+		"""
+		if (getattr(self._connectionDepth, "value", 0) != 0):
+			return
+		database = self._database
+		if (database == None):
+			return
+		try:
+			if (database.is_closed() == False and database.in_transaction() == False):
+				database.close()
+		except Exception as e:
+			# A dead connection may refuse to close cleanly - it is gone either way.
+			self._logger.debug("Could not release the thread's connection: " + str(e))
+
+
 	def isExternalDatabase(self):
 		return self._databaseSettings.useExternal == True
 

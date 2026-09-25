@@ -1260,13 +1260,23 @@ class PrintJobHistoryExtendedPlugin(
 			self._backfillTargetPrintEndDateTime = None
 
 		self._createPrintJobModel(payload)
+		# The event thread lives for the whole print; a connection it kept would be long
+		# dead by the time the job is captured.
+		self._databaseManager.releaseThreadConnection()
 
 	#### print job finished
 	# printStatus = "success", "failed", "canceled"
 	def _printJobFinished(self, printStatus, payload):
 		self._logger.info("PrintJob finished!")
 
-		self._capturePrintJobData(printStatus, payload)
+		# Start the capture without a connection left over on this thread (a stale one
+		# fails with "server has gone away" before the retry in insertPrintJob is reached),
+		# and do not leave one behind for the next print either.
+		self._databaseManager.releaseThreadConnection()
+		try:
+			self._capturePrintJobData(printStatus, payload)
+		finally:
+			self._databaseManager.releaseThreadConnection()
 
 	def _capturePrintJobData(self, printStatus, payload):
 		captureMode = self._settings.get([SettingsKeys.SETTINGS_KEY_CAPTURE_PRINTJOBHISTORY_MODE])
@@ -1310,25 +1320,34 @@ class PrintJobHistoryExtendedPlugin(
 					self._currentPrintJobModel.printEndDateTime - self._currentPrintJobModel.printStartDateTime).total_seconds()
 			self._currentPrintJobModel.printStatusResult = printStatus
 
+			# Everything between here and insertPrintJob is enrichment: each step may fail on
+			# its own, the print job record itself must always be stored.
+
 			# - Slicer Settings
 			# Check the expressions first: the parser needs a real file on disk, and a
 			# printer-hosted print has none. Without expressions there is nothing to read
 			# anyway, so the file manager is not touched at all in the default config.
-			slicerSettingsExpressions = self._settings.get([SettingsKeys.SETTINGS_KEY_SLICERSETTINGS_KEYVALUE_EXPRESSION])
-			if (slicerSettingsExpressions != None and len(slicerSettingsExpressions) != 0):
-				selectedFile = self._resolveFileOnDisk(payload.get("origin"), payload.get("path"))
-				if (selectedFile != None):
-					slicerSettings = SlicerSettingsParser(self._logger).extractSlicerSettings(selectedFile, slicerSettingsExpressions)
-					if (slicerSettings.settingsAsText != None and len(slicerSettings.settingsAsText) != 0):
-						self._currentPrintJobModel.slicerSettingsAsText = slicerSettings.settingsAsText
+			try:
+				slicerSettingsExpressions = self._settings.get([SettingsKeys.SETTINGS_KEY_SLICERSETTINGS_KEYVALUE_EXPRESSION])
+				if (slicerSettingsExpressions != None and len(slicerSettingsExpressions) != 0):
+					selectedFile = self._resolveFileOnDisk(payload.get("origin"), payload.get("path"))
+					if (selectedFile != None):
+						slicerSettings = SlicerSettingsParser(self._logger).extractSlicerSettings(selectedFile, slicerSettingsExpressions)
+						if (slicerSettings.settingsAsText != None and len(slicerSettings.settingsAsText) != 0):
+							self._currentPrintJobModel.slicerSettingsAsText = slicerSettings.settingsAsText
+			except Exception as e:
+				self._logger.exception("Could not read slicer settings, storing the print job without them: " + str(e))
 
 			# - Temperatures, highest seen while printing (see _trackHighestTemperatureAsync)
-			highestTemperatures = self._currentPrintJobModel.highestTemperatures
-			if (highestTemperatures != None):
-				(highestBed, toolId, highestTool) = highestTemperatures
-				self._addTemperatureToPrintModel(self._currentPrintJobModel, highestBed, toolId, highestTool)
-			else:
-				self._logger.warning("No temperature was tracked during this print, storing none")
+			try:
+				highestTemperatures = self._currentPrintJobModel.highestTemperatures
+				if (highestTemperatures != None):
+					(highestBed, toolId, highestTool) = highestTemperatures
+					self._addTemperatureToPrintModel(self._currentPrintJobModel, highestBed, toolId, highestTool)
+				else:
+					self._logger.warning("No temperature was tracked during this print, storing none")
+			except Exception as e:
+				self._logger.exception("Could not add temperatures, storing the print job without them: " + str(e))
 
 			# - Image / Thumbnail
 			# Enrichment only: a print that happened must be recorded even when we cannot
@@ -1347,7 +1366,10 @@ class PrintJobHistoryExtendedPlugin(
 				self._logger.exception("Could not read filament informations, storing the print job without them: " + str(e))
 
 			# - Costs
-			self._addCostsToPrintModel(self._currentPrintJobModel)
+			try:
+				self._addCostsToPrintModel(self._currentPrintJobModel)
+			except Exception as e:
+				self._logger.exception("Could not calculate costs, storing the print job without them: " + str(e))
 
 			# store everything in the database
 			self._logger.info("----- Try storing printjob model ----")
