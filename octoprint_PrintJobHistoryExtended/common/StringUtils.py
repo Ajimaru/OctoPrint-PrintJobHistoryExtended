@@ -236,6 +236,36 @@ def transformToIntOrNone(intValue):
 	return intValue
 
 
+# Returns the text unchanged if its UTF-8 form fits into maxBytes. Otherwise keeps a third of
+# the budget from the beginning and two thirds from the end, cut at line breaks, and puts a
+# note in between; "{omitted}" in the note becomes the number of bytes left out. Meant for
+# logs: the beginning tells what ran, the end how it ended.
+def shortenInTheMiddle(text, maxBytes, noteTemplate="[... {omitted} bytes left out ...]\n"):
+	if (text == None):
+		return None
+	encoded = text.encode("utf-8")
+	if (len(encoded) <= maxBytes):
+		return text
+
+	# the note can only get shorter than this, the omitted count is below the total length
+	budget = maxBytes - len(noteTemplate.format(omitted=len(encoded)).encode("utf-8"))
+	headBytes = budget // 3
+	tailBytes = budget - headBytes
+	head = encoded[:headBytes]
+	tail = encoded[len(encoded) - tailBytes:]
+	# whole lines only: the head ends after its last line break, the tail starts after its first
+	headCut = head.rfind(b"\n")
+	if (headCut != -1):
+		head = head[:headCut + 1]
+	tailCut = tail.find(b"\n")
+	if (tailCut != -1):
+		tail = tail[tailCut + 1:]
+
+	note = noteTemplate.format(omitted=len(encoded) - len(head) - len(tail))
+	# "ignore" drops a character a cut without line break went through the middle of
+	return head.decode("utf-8", "ignore") + note + tail.decode("utf-8", "ignore")
+
+
 #################### START: copied from octorprint
 def get_formatted_size(num):
 	"""

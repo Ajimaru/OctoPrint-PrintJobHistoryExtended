@@ -7,6 +7,7 @@ import time
 from queue import Queue
 
 import octoprint.plugin
+from octoprint.access.permissions import Permissions
 from octoprint.events import Events
 from octoprint.filemanager import FileDestinations
 
@@ -35,7 +36,7 @@ from .api import TransformPrintJob2JSON
 from .DatabaseManager import DatabaseManager
 from .CameraManager import CameraManager
 
-from octoprint_PrintJobHistoryExtended.common import StringUtils, DateTimeUtils
+from octoprint_PrintJobHistoryExtended.common import StringUtils, DateTimeUtils, CameraSettingsMigration
 
 # Identifier this plugin used before it was renamed to "PrintJobHistoryExtended". Both the
 # data folder (~/.octoprint/data/<identifier>/) and the settings namespace
@@ -60,13 +61,21 @@ LEGACY_UNDO_FILE_NAMES = {
 # for one. It has to outlive the process, hence a file rather than an attribute.
 LEGACY_RESTART_REQUIRED_FILE_NAME = "legacy-migration-restart-required"
 
+# Everything this plugin logs while a print runs, stored with the job afterwards.
+TECHNICAL_LOG_FILE_NAME = "plugin_PrintJobHistoryExtended_singlePrintJob.log"
+# MySQL keeps the technical log in a TEXT column, which holds 65,535 bytes. A long print can log
+# more - 77 KB in 2.5 hours once a warning repeated every 15 seconds - and then the whole update
+# failed: the log was lost and the user got an error popup. Some headroom below the limit.
+TECHNICAL_LOG_MAX_BYTES = 60000
+
 # Settings that must not be carried over: the two path keys point into the *old* plugin's
-# data folder and would send this install back to the legacy database, and the version
-# describes the installed plugin rather than a user choice.
+# data folder and would send this install back to the legacy database, and the versions
+# describe the installed plugin and its settings format rather than a user choice.
 LEGACY_SETTINGS_NOT_MIGRATABLE = frozenset([
 	SettingsKeys.SETTINGS_KEY_DATABASE_PATH,
 	SettingsKeys.SETTINGS_KEY_SNAPSHOT_PATH,
 	"installed_version",
+	octoprint.plugin.SettingsPlugin.config_version_key,
 ])
 
 
@@ -135,7 +144,7 @@ class PrintJobHistoryExtendedPlugin(
 		self._cameraManager = CameraManager(self._logger)
 		pluginBaseFolder = self._basefolder
 
-		self._cameraManager.initCamera(pluginDataBaseFolder, pluginBaseFolder, self._settings)
+		self._cameraManager.initCamera(pluginDataBaseFolder, pluginBaseFolder)
 
 		# Init values for initial settings view-page
 		self._settings.set([SettingsKeys.SETTINGS_KEY_DATABASE_PATH], self._databaseManager.getDatabaseFileLocation())
@@ -144,6 +153,8 @@ class PrintJobHistoryExtendedPlugin(
 
 		# OTHER STUFF
 		self._currentPrintJobModel = None
+		# The printer asked for the snapshot of the running print (M118) and got one
+		self._m118SnapshotTaken = False
 
 		self.alreadyCanceled = False
 
@@ -183,13 +194,6 @@ class PrintJobHistoryExtendedPlugin(
 		self._sendDataToClient(dict(action="errorPopUp",
 									title=title,
 									message=message))
-
-	def _sendReloadTableToClient(self, shouldSend=True):
-		if (shouldSend == True):
-			payload = {
-				"action": "reloadTableItems"
-			}
-			self._sendDataToClient(payload)
 
 	def _sendMessageConfirmToClient(self, title, message):
 		confirmMessageData = {
@@ -819,6 +823,10 @@ class PrintJobHistoryExtendedPlugin(
 
 	def _collectHighestTemperatures(self, highestTemperatures, currentTemps):
 		for sensorName in currentTemps:
+			# The Moonraker connector files every Klipper heater it has no name for under None,
+			# bed included, and logged a warning every 15 s - enough to overflow the technical log.
+			if (isinstance(sensorName, str) == False):
+				continue
 			if (sensorName == "bed" or sensorName.startswith("tool")):
 				highest = self._higherTemperature(highestTemperatures.get(sensorName), currentTemps, sensorName)
 				if (highest != None):
@@ -1414,6 +1422,7 @@ class PrintJobHistoryExtendedPlugin(
 		self._logger.info("PrintJob '" + payload["name"] + "' started!")
 
 		self.alreadyCanceled = False
+		self._m118SnapshotTaken = False
 
 		# A new print invalidates the previous backfill window: a late usage event must
 		# neither land on the job before last nor on the job now running.
@@ -1591,7 +1600,9 @@ class PrintJobHistoryExtendedPlugin(
 		if (databaseId != None):
 			techLog = self._resetableFileLogHandler.readLogContent()
 			lastPrintJobModel = self._databaseManager.loadPrintJob(databaseId)
-			lastPrintJobModel.technicalLog = techLog
+			lastPrintJobModel.technicalLog = StringUtils.shortenInTheMiddle(
+				techLog, TECHNICAL_LOG_MAX_BYTES,
+				"[... {omitted} bytes left out, the complete log is in " + TECHNICAL_LOG_FILE_NAME + " until the next print starts ...]\n")
 			self._databaseManager.updatePrintJob(lastPrintJobModel)
 			if (payload != None):
 				if (payLoadForClient["printJobItem"] != None):
@@ -1613,84 +1624,109 @@ class PrintJobHistoryExtendedPlugin(
 			return self._backfillTargetDatabaseId != None
 
 
+	# The image step of a finished print. The work itself runs in a thread of its own: the
+	# preview of a file on a Bambu printer is only there once the whole 3MF was downloaded
+	# from the printer, and a webcam can be slow as well. Neither may hold up the event
+	# thread, which still has to hand PRINT_DONE on to SpoolManagerExtended.
 	def _grabImage(self, payload):
 		self._logger.info("----- Start grab Image/thumbnail... -----")
-		isCameraPresent = self._cameraManager.isCamaraSnahotURLPresent()
-
-		takeSnapshotAfterPrint = self._settings.get_boolean([SettingsKeys.SETTINGS_KEY_TAKE_SNAPSHOT_AFTER_PRINT])
-		takeSnapshotOnGCode = self._settings.get_boolean([SettingsKeys.SETTINGS_KEY_TAKE_SNAPSHOT_ON_GCODE_COMMAND])
-		takeSnapshotOnM118Code = self._settings.get_boolean([SettingsKeys.SETTINGS_KEY_TAKE_SNAPSHOT_ON_M118_COMMAND])
-		takeThumbnailAfterPrint = self._settings.get_boolean(
-			[SettingsKeys.SETTINGS_KEY_TAKE_PLUGIN_THUMBNAIL_AFTER_PRINT])
-
-		preferedSnapshot = self._settings.get(
-			[SettingsKeys.SETTINGS_KEY_PREFERED_IMAGE_SOURCE]) == SettingsKeys.KEY_PREFERED_IMAGE_SOURCE_CAMERA
-		preferedThumbnail = self._settings.get(
-			[SettingsKeys.SETTINGS_KEY_PREFERED_IMAGE_SOURCE]) == SettingsKeys.KEY_PREFERED_IMAGE_SOURCE_THUMBNAIL
-
-		isThumbnailPresent = self._isThumbnailPresent(payload)
-
-		# - No Image
-		if (takeSnapshotAfterPrint == False and takeSnapshotOnGCode == False and takeSnapshotOnM118Code == False and takeThumbnailAfterPrint == False):
+		imageSource = self._settings.get([SettingsKeys.SETTINGS_KEY_IMAGE_SOURCE])
+		if (imageSource == SettingsKeys.KEY_IMAGE_SOURCE_NONE):
 			self._logger.info("No image should be taken")
 			return
-		# - Only Thumbnail
-		if (takeThumbnailAfterPrint == True and takeSnapshotAfterPrint == False and takeSnapshotOnGCode == False and takeSnapshotOnM118Code == False):
-			# Try to take the thumbnail
-			self._logger.info("Try to take thumbnail, because afterprint/gcode not selected")
-			self._takeThumbnailImage(payload)
+
+		# The printer asked for this snapshot while printing, at the moment the gcode chose
+		# for it. A snapshot from the end of the print would only be a worse one.
+		if (imageSource == SettingsKeys.KEY_IMAGE_SOURCE_CAMERA and self._m118SnapshotTaken == True):
+			self._logger.info("Keeping the snapshot the printer asked for with M118")
 			return
-		if (takeThumbnailAfterPrint == True and isThumbnailPresent == True and preferedThumbnail == True):
-			self._logger.info("Try to take thumbnail, because thumbnail is present and prefered")
-			self._takeThumbnailImage(payload)
-			return
-		# - Only Camera
-		if ((takeSnapshotAfterPrint == True) and takeThumbnailAfterPrint == False):
-			if (isCameraPresent == False):
-				self._logger.info("Camera Snapshot is selected but no camera url is available")
-				return
-			self._logger.info("Try capturing snapshot asyc from camera, because thumbnail not selected")
-			self._cameraManager.takeSnapshotAsync(
-				CameraManager.buildSnapshotFilename(self._currentPrintJobModel.printStartDateTime),
-				self._sendErrorMessageToClient,
-				self._sendReloadTableToClient
-			)
 
-			return
-		# - Camera
-		if (isCameraPresent == True and takeSnapshotAfterPrint == True):
-			self._logger.info("Try capturing snapshot asyc")
-			self._cameraManager.takeSnapshotAsync(
-				CameraManager.buildSnapshotFilename(self._currentPrintJobModel.printStartDateTime),
-				self._sendErrorMessageToClient,
-				self._sendReloadTableToClient
-			)
+		snapshotFilename = CameraManager.buildSnapshotFilename(self._currentPrintJobModel.printStartDateTime)
+		thread = threading.Thread(name="GrabPrintJobImage",
+								  target=self._grabImageInBackground,
+								  args=(imageSource, snapshotFilename, payload.get("origin"), payload.get("path")))
+		thread.daemon = True
+		thread.start()
 
 
-	def _isThumbnailPresent(self, payload):
-		return self._takeThumbnailImage(payload, storeImage=False)
+	# Takes the image from the chosen source and, when that one has none to give, from the
+	# other one: an entry with the second best image is worth more than one without any.
+	def _grabImageInBackground(self, imageSource, snapshotFilename, fileOrigin, filePath):
+		try:
+			webcam = ("webcam", lambda: self._cameraManager.takeSnapshot(snapshotFilename))
+			filePreview = ("file preview", lambda: self._takePreviewImage(snapshotFilename, fileOrigin, filePath))
+			if (imageSource == SettingsKeys.KEY_IMAGE_SOURCE_CAMERA):
+				imageSources = [webcam, filePreview]
+			else:
+				imageSources = [filePreview, webcam]
+
+			for sourceName, takeImage in imageSources:
+				if (takeImage() == True):
+					self._logger.info("Image of the print job taken from the " + sourceName)
+					self._sendDataToClient(dict(action="printJobImageUpdated",
+												snapshotFilename=snapshotFilename))
+					return
+				self._logger.info("No image from the " + sourceName)
+			self._logger.warning("The print job is stored without an image")
+		except Exception as e:
+			self._logger.exception("Could not grab an image for the print job: " + str(e))
 
 
-	def _takeThumbnailImage(self, payload, storeImage=True):
-		self._logger.info("Try reading Thumbnail")
-		thumbnailPresent = False
-		metadata = self._readFileMetaData(payload["origin"], payload["path"])
-		# check if available
-		if (metadata != None and "thumbnail" in metadata):
-			thumbnailPresent = self._cameraManager.takePluginThumbnail(
-				CameraManager.buildSnapshotFilename(self._currentPrintJobModel.printStartDateTime),
-				metadata["thumbnail"],
-				storeImage=storeImage
-			)
-		else:
-			self._logger.warning("Thumbnail not found in print metadata")
+	# The preview the slicer embedded into the print file. Since 2.0 OctoPrint extracts it
+	# itself, and for a printer-hosted file the connector fetches it from the printer
+	# (Moonraker, Bambu). Local files uploaded before, and UFP packages, only have the one a
+	# thumbnail plugin stored - hence that one as the second choice.
+	def _takePreviewImage(self, snapshotFilename, fileOrigin, filePath):
+		if (self._takeFilePreviewImage(snapshotFilename, fileOrigin, filePath) == True):
+			return True
+		return self._takePluginThumbnailImage(snapshotFilename, fileOrigin, filePath)
 
-		if (thumbnailPresent == False):
-			self._logger.warning("Thumbnail not found for cameraManager")
-		else:
-			self._logger.info("Thumbnail was captured from metadata")
 
-		return thumbnailPresent
+	def _takeFilePreviewImage(self, snapshotFilename, fileOrigin, filePath):
+		try:
+			# Truthiness on purpose: connectors answer has_thumbnail() with the thumbnail
+			# list or a folder name rather than a bool.
+			if (not self._file_manager.capabilities(fileOrigin).thumbnails
+				or not self._file_manager.has_thumbnail(fileOrigin, filePath)):
+				self._logger.info("No preview image in '" + str(filePath) + "' (origin '" + str(fileOrigin) + "')")
+				return False
+
+			# without a size hint every storage answers with its largest preview
+			thumbnail = self._file_manager.read_thumbnail(fileOrigin, filePath)
+			if (thumbnail == None):
+				self._logger.info("The storage delivered no preview image for '" + str(filePath) + "'")
+				return False
+
+			thumbnailInfo, thumbnailHandle = thumbnail
+			try:
+				chunks = []
+				while True:
+					chunk = thumbnailHandle.read()
+					if (chunk == None or len(chunk) == 0):
+						break
+					chunks.append(chunk)
+			finally:
+				thumbnailHandle.close()
+
+			self._logger.info("Read preview image '" + str(thumbnailInfo.name) + "' (" + str(thumbnailInfo.sizehint) + ") of '" + str(filePath) + "'")
+			return self._cameraManager.storeThumbnail(snapshotFilename, b"".join(chunks))
+		except Exception as e:
+			self._logger.warning("Could not take the preview image of '" + str(filePath) + "': " + str(e))
+			return False
+
+
+	# The preview a thumbnail plugin (Slicer Thumbnails, Cura Thumbnails) stored for the file
+	# and referenced in its metadata
+	def _takePluginThumbnailImage(self, snapshotFilename, fileOrigin, filePath):
+		metadata = self._readFileMetaData(fileOrigin, filePath)
+		if (metadata == None or not metadata.get("thumbnail")):
+			self._logger.info("No thumbnail plugin stored a preview image for '" + str(filePath) + "'")
+			return False
+		try:
+			return self._cameraManager.takePluginThumbnail(snapshotFilename, metadata["thumbnail"])
+		except Exception as e:
+			self._logger.warning("Could not take the preview image a thumbnail plugin stored: " + str(e))
+			return False
 
 
 	#######################################################################################   OP - HOOKs
@@ -1723,7 +1759,7 @@ class PrintJobHistoryExtendedPlugin(
 		# listener = logging.handlers.QueueListener(que, self._technicalLoggingHandler)
 		# listener.start()
 
-		logFilename = os.path.join(self._settings.getBaseFolder("logs"), "plugin_PrintJobHistoryExtended_singlePrintJob.log")
+		logFilename = os.path.join(self._settings.getBaseFolder("logs"), TECHNICAL_LOG_FILE_NAME)
 		formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 		self._resetableFileLogHandler = ResetAbleLogFileHandler(logFilename, "octoprint.plugins.PrintJobHistoryExtended")
 		self._resetableFileLogHandler.setFormatter(formatter)
@@ -1738,46 +1774,36 @@ class PrintJobHistoryExtendedPlugin(
 
 
 
-	# Listen to all  g-code which where already sent to the printer (thread: comm.sending_thread)
-	def on_sentGCodeHook(self, comm_instance, phase, cmd, cmd_type, gcode, *args, **kwargs):
-		# take snapshot an gcode command
-		if (self._settings.get_boolean([SettingsKeys.SETTINGS_KEY_TAKE_SNAPSHOT_ON_GCODE_COMMAND])):
-			gcodePattern = self._settings.get([SettingsKeys.SETTINGS_KEY_TAKE_SNAPSHOT_GCODE_COMMAND_PATTERN])
-			if (gcodePattern != None and len(gcodePattern.strip()) != 0):
-				commandAsString = StringUtils.to_native_str(cmd)
-				if (commandAsString.startswith(gcodePattern)):
-					self._logger.info("M117 message for taking snapshot detected. Try to capture image!")
-					self._cameraManager.takeSnapshotAsync(
-						CameraManager.buildSnapshotFilename(self._currentPrintJobModel.printStartDateTime),
-						self._sendErrorMessageToClient
-					)
-				pass
-		pass
-
-	# Receiving commands from the printer
+	# Receiving commands from the printer: "M118 //action:pjhTakeSnapshot" in the gcode lets
+	# the print decide when the snapshot is taken, e.g. once the bed has moved to the front.
+	# Only printers that talk to OctoPrint directly (serial) send action commands.
 	# Terminal: !!DEBUG:send //action:pjhTakeSnapshot
 	def on_receivedActionHook(self, comm, line, action, *args, **kwargs):
-		if (action == "pjhTakeSnapshot"):
-			self._logger.info("Received \"pjhTakeSnapshot\" action from printer")
+		if (action != "pjhTakeSnapshot"):
+			return
+		self._logger.info("Received \"pjhTakeSnapshot\" action from printer")
 
-			if (self._settings.get_boolean(
-				[SettingsKeys.SETTINGS_KEY_TAKE_SNAPSHOT_ON_M118_COMMAND])):
-				self._logger.info("M118 command enabled for taking snapshot. Try to capture image!")
-				if (self._currentPrintJobModel != None and self._currentPrintJobModel.printStartDateTime != None):
+		if (self._settings.get([SettingsKeys.SETTINGS_KEY_IMAGE_SOURCE]) != SettingsKeys.KEY_IMAGE_SOURCE_CAMERA
+			or self._settings.get_boolean([SettingsKeys.SETTINGS_KEY_TAKE_SNAPSHOT_ON_M118_COMMAND]) != True):
+			self._logger.info("Take Snapshot via M118 command is not activated in plugin settings")
+			return
 
-					if (self._cameraManager.isCamaraSnahotURLPresent() == True):
-						# Try to take the snapshot
-						self._cameraManager.takeSnapshotAsync(
-							CameraManager.buildSnapshotFilename(self._currentPrintJobModel.printStartDateTime),
-							self._sendErrorMessageToClient)
-					else:
-						self._logger.error("Camera Snapshot is selected, but no camera url is available")
-				else:
-					self._logger.error("M118 command detected, but there is no printjob started!")
-			else:
-				self._logger.info("Take Snapshot via M118 command is not activated in plugin settings")
+		if (self._currentPrintJobModel == None or self._currentPrintJobModel.printStartDateTime == None):
+			self._logger.error("M118 command detected, but there is no printjob started!")
+			return
 
-		return
+		printStartDateTime = self._currentPrintJobModel.printStartDateTime
+
+		def snapshotTaken(success):
+			# only for the print that asked, should the next one have started meanwhile
+			if (success == True and self._currentPrintJobModel != None
+				and self._currentPrintJobModel.printStartDateTime == printStartDateTime):
+				self._m118SnapshotTaken = True
+
+		self._logger.info("M118 command enabled for taking snapshot. Try to capture image!")
+		self._cameraManager.takeSnapshotAsync(CameraManager.buildSnapshotFilename(printStartDateTime),
+											  None,
+											  snapshotTaken)
 
 	def additional_permissions_hook(self):
 		from octoprint.access import ADMIN_GROUP
@@ -1962,20 +1988,24 @@ class PrintJobHistoryExtendedPlugin(
 
 
 
-	# to allow the frontend to trigger an GET call
+	# Declared explicitly: OctoPrint's default is going to switch from False to True, and it
+	# warns on every start as long as a plugin relies on it.
+	def is_api_protected(self):
+		return True
+
+	# Serves the defaults for the "Reset Settings" button in the settings dialog. Read-only
+	# on purpose: the reset happens in the dialog and only takes effect once the user saves.
+	# The former "resetSettings" action wrote the defaults on a plain GET, database
+	# connection included.
 	def on_api_get(self, request):
-		if len(request.values) != 0:
-			action = request.values["action"]
+		if not Permissions.SETTINGS.can():
+			flask.abort(403)
 
-			# deceide if you want the reset function in you settings dialog
-			if "isResetSettingsEnabled" == action:
-				return flask.jsonify(enabled="true")
+		action = request.values.get("action")
+		if "getDefaultSettings" == action:
+			return flask.jsonify(self.get_settings_defaults())
 
-			if "resetSettings" == action:
-				self._settings.set([], self.get_settings_defaults())
-				self._settings.save()
-				return flask.jsonify(self.get_settings_defaults())
-		pass
+		flask.abort(400, description="Unknown action: " + str(action))
 
 
 	##~~ SettingsPlugin mixin
@@ -2017,12 +2047,9 @@ class PrintJobHistoryExtendedPlugin(
 		settings[SettingsKeys.SETTINGS_KEY_NO_NOTIFICATION_TASMOTA_POLLING] = False
 
 		## Camera
-		settings[SettingsKeys.SETTINGS_KEY_TAKE_SNAPSHOT_AFTER_PRINT] = True
-		settings[SettingsKeys.SETTINGS_KEY_TAKE_PLUGIN_THUMBNAIL_AFTER_PRINT] = True
+		# The preview needs no hardware, and the webcam still stands in for files without one
+		settings[SettingsKeys.SETTINGS_KEY_IMAGE_SOURCE] = SettingsKeys.KEY_IMAGE_SOURCE_THUMBNAIL
 		settings[SettingsKeys.SETTINGS_KEY_TAKE_SNAPSHOT_ON_M118_COMMAND] = False
-		settings[SettingsKeys.SETTINGS_KEY_TAKE_SNAPSHOT_ON_GCODE_COMMAND] = False
-		settings[SettingsKeys.SETTINGS_KEY_TAKE_SNAPSHOT_GCODE_COMMAND_PATTERN] = "M117 Snap"
-		settings[SettingsKeys.SETTINGS_KEY_PREFERED_IMAGE_SOURCE] = SettingsKeys.KEY_PREFERED_IMAGE_SOURCE_THUMBNAIL
 
 		## Temperature
 		settings[SettingsKeys.SETTINGS_KEY_DEFAULT_TOOL_ID] = "tool0"
@@ -2060,6 +2087,39 @@ class PrintJobHistoryExtendedPlugin(
 		# 	settings[SettingsKeys.SETTINGS_KEY_SNAPSHOT_PATH] = ""
 
 		return settings
+
+
+	# 1: the camera switches collapsed into one image source
+	def get_settings_version(self):
+		return 1
+
+
+	# Called by OctoPrint before the plugin's settings are used, also for installs that
+	# never had a settings version (current is None then).
+	def on_settings_migrate(self, target, current):
+		if (current == None or current < 1):
+			self._migrateCameraSettings()
+
+
+	def _migrateCameraSettings(self):
+		# Only what is stored counts: the old keys have no defaults any more, so a key the
+		# user never changed reads as None and translates with its old default.
+		storedValues = {}
+		for key in CameraSettingsMigration.LEGACY_CAMERA_DEFAULTS:
+			value = self._settings.get([key])
+			if (value != None):
+				storedValues[key] = value
+
+		translatedValues = CameraSettingsMigration.translateCameraSettings(storedValues)
+		if (translatedValues is storedValues):
+			return
+
+		imageSource = translatedValues[SettingsKeys.SETTINGS_KEY_IMAGE_SOURCE]
+		self._settings.set([SettingsKeys.SETTINGS_KEY_IMAGE_SOURCE], imageSource)
+		for key in CameraSettingsMigration.OBSOLETE_CAMERA_KEYS:
+			if (key in storedValues):
+				self._settings.remove([key])
+		self._logger.info("Migrated the camera settings " + str(storedValues) + " to image source '" + str(imageSource) + "'")
 
 
 	##~~ TemplatePlugin mixin
@@ -2166,6 +2226,16 @@ class PrintJobHistoryExtendedPlugin(
 
 	def _hasLegacySettings(self):
 		return bool(self._settings.global_get(["plugins", LEGACY_IDENTIFIER]))
+
+
+	def _getLegacySettings(self):
+		"""
+		The settings of the previous install, in this plugin's current format. The old camera
+		switches are translated on the way: copied as they are, they would be dead keys that
+		no longer control anything.
+		"""
+		return CameraSettingsMigration.translateCameraSettings(
+			self._settings.global_get(["plugins", LEGACY_IDENTIFIER]))
 
 
 	def _isLegacyMigrationAvailable(self):
@@ -2393,7 +2463,7 @@ class PrintJobHistoryExtendedPlugin(
 			}
 
 		legacyDataFolder = self._getLegacyDataFolder()
-		legacySettings = self._settings.global_get(["plugins", LEGACY_IDENTIFIER])
+		legacySettings = self._getLegacySettings()
 
 		if legacyDataFolder is None and not legacySettings:
 			return failure("No previous PrintJobHistory installation found. Nothing to migrate.")
@@ -2587,7 +2657,7 @@ class PrintJobHistoryExtendedPlugin(
 		namespace holds a handful of keys while the plugin knows dozens. Only the stored
 		ones are worth showing here - the rest are identical defaults on both sides.
 		"""
-		legacySettings = self._settings.global_get(["plugins", LEGACY_IDENTIFIER]) or {}
+		legacySettings = self._getLegacySettings() or {}
 		comparison = []
 		for key in sorted(legacySettings.keys()):
 			if key in LEGACY_SETTINGS_NOT_MIGRATABLE:
@@ -2610,7 +2680,7 @@ class PrintJobHistoryExtendedPlugin(
 
 	def _applyLegacySettings(self, keys):
 		"""Writes only the named keys from the legacy namespace into this plugin's own."""
-		legacySettings = self._settings.global_get(["plugins", LEGACY_IDENTIFIER]) or {}
+		legacySettings = self._getLegacySettings() or {}
 		selectedValues = {}
 		for key in keys:
 			if key in LEGACY_SETTINGS_NOT_MIGRATABLE:
@@ -2666,8 +2736,6 @@ def __plugin_load__():
 	global __plugin_hooks__
 	__plugin_hooks__ = {
 		# "octoprint.server.http.routes": __plugin_implementation__.route_hook,
-		# "octoprint.comm.protocol.gcode.sent": __plugin_implementation__.on_sentGCodeHook,
-		"octoprint.comm.protocol.gcode.sending": __plugin_implementation__.on_sentGCodeHook,
 		"octoprint.comm.protocol.action": __plugin_implementation__.on_receivedActionHook,
 		"octoprint.access.permissions": __plugin_implementation__.additional_permissions_hook,
 		"octoprint.server.http.bodysize": __plugin_implementation__.bodysize_hook,

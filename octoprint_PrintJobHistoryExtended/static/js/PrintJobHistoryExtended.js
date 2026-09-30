@@ -495,42 +495,24 @@ $(function() {
         self.busyIndicatorActive = ko.observable(false);
 
         self.downloadDatabaseUrl = ko.observable();
-        self.cameraSnapShotURLAvailable = ko.observable(false);
 
-        isSnapshotUrlPresent = function(snapshotUrl){
-            return snapshotUrl != null && snapshotUrl.trim().length != 0;
-        }
-        self.initCameraSettingsBehaviour = function(){
-
-            if (self.settingsViewModel.settings.webcam.snapshotUrl != null){
-                // assign inital values
-                self.cameraSnapShotURLAvailable(isSnapshotUrlPresent(self.settingsViewModel.settings.webcam.snapshotUrl()));
-
-                self.settingsViewModel.settings.webcam.snapshotUrl.subscribe(function(newSnapShotUrl){
-                    self.cameraSnapShotURLAvailable(isSnapshotUrlPresent(newSnapShotUrl));
-                });
-            }
-            // Checkbox - stuff
-            self.pluginSettings.takeSnapshotAfterPrint.subscribe(function(newValue){
-                  if (newValue == true){
-                        self.pluginSettings.takeSnapshotOnM118Commnd(false);
-                        self.pluginSettings.takeSnapshotOnGCodeCommnd(false);
-                    }
+        // The webcam OctoPrint takes snapshots with ("Webcam & Timelapse"). Same lookup as
+        // OctoPrint's own timelapse view model; the old snapshot URL setting is only a
+        // deprecated view of the default webcam.
+        self.snapshotWebcam = ko.pureComputed(function(){
+            var snapshotWebcamName = self.settingsViewModel.webcam_snapshotWebcam();
+            return self.settingsViewModel.webcam_webcams().find(function(webcam){
+                return webcam.name == snapshotWebcamName;
             });
-            self.pluginSettings.takeSnapshotOnGCodeCommnd.subscribe(function(newValue){
-                    if (newValue == true){
-                        self.pluginSettings.takeSnapshotOnM118Commnd(false);
-                        self.pluginSettings.takeSnapshotAfterPrint(false);
-                    }
-            });
-            self.pluginSettings.takeSnapshotOnM118Commnd.subscribe(function(newValue){
-                    if (newValue == true){
-                        self.pluginSettings.takeSnapshotOnGCodeCommnd(false);
-                        self.pluginSettings.takeSnapshotAfterPrint(false);
-                    }
-            });
-
-        }
+        });
+        self.canTakeWebcamSnapshot = ko.pureComputed(function(){
+            var webcam = self.snapshotWebcam();
+            return webcam != null && webcam.canSnapshot == true;
+        });
+        self.snapshotWebcamDisplayName = ko.pureComputed(function(){
+            var webcam = self.snapshotWebcam();
+            return webcam != null ? webcam.displayName : "";
+        });
 
         self.deleteDatabaseAction = function() {
             var confirmMessage = "Do you really want to delete all PrintJobHistory data?";
@@ -956,11 +938,9 @@ $(function() {
             loadSettingsFromBrowserStore();
 
             // resetSettings-Stuff
-            new ResetSettingsUtilV3(self.pluginSettings).assignResetSettingsFeature(PLUGIN_ID, function(data){
+            new PrintJobHistoryExtendedResetSettingsUtilV3(self.pluginSettings).assignResetSettingsFeature(PLUGIN_ID, function(data){
                 // no additional reset function
              });
-
-            self.initCameraSettingsBehaviour();
         }
 
         self.onAfterBinding = function() {
@@ -1090,6 +1070,14 @@ $(function() {
 
             if ("reloadTableItems" == data.action){
                 self.printJobHistoryExtendedTableHelper.reloadItems();
+                return;
+            }
+
+            // The image is taken after the job was stored, in the background, so the dialog
+            // shown after the print may still show "no image" when it arrives.
+            if ("printJobImageUpdated" == data.action){
+                self.printJobHistoryExtendedTableHelper.reloadItems();
+                self.printJobEditDialog.refreshSnapshotImage(data.snapshotFilename);
                 return;
             }
 
