@@ -221,6 +221,49 @@ class LegacyMigrationTest(unittest.TestCase):
         self.assertEqual("GBP", self.plugin._settings.get(["currencySymbol"]))
         self.assertIsNone(self.plugin._settings.get(["currencyFormat"]))
 
+    def test_oldCameraSwitchesArriveAsImageSource(self):
+        # copied as they are, the old switches would be dead keys that control nothing
+        self.plugin._settings = FakeSettings(self.baseFolder, {
+            "currencySymbol": "GBP",
+            "takePluginThumbnailAfterPrint": False,
+            "takeSnapshotOnM118Commnd": True,
+        })
+        self.legacyDatabase()
+
+        result = self.plugin._performLegacyMigration(includeSettings=True)
+
+        self.assertTrue(result["settingsMigrated"])
+        self.assertEqual("camera", self.plugin._settings.get(["imageSourceAfterPrint"]))
+        self.assertTrue(self.plugin._settings.get(["takeSnapshotOnM118Commnd"]))
+        self.assertIsNone(self.plugin._settings.get(["takePluginThumbnailAfterPrint"]))
+        self.assertEqual("GBP", self.plugin._settings.get(["currencySymbol"]))
+
+    def test_comparisonOffersTheImageSourceInsteadOfTheOldCameraSwitches(self):
+        self.plugin._settings = FakeSettings(self.baseFolder, {"preferedImageSource": "camera"})
+
+        comparison = self.plugin._getLegacySettingsComparison()
+
+        self.assertEqual(["imageSourceAfterPrint"], [entry["key"] for entry in comparison])
+        self.assertEqual("camera", comparison[0]["legacyValue"])
+
+    def test_applyingTheTranslatedImageSource(self):
+        self.plugin._settings = FakeSettings(self.baseFolder, {"preferedImageSource": "camera"})
+
+        result = self.plugin._applyLegacySettings(["imageSourceAfterPrint"])
+
+        self.assertTrue(result["success"])
+        self.assertEqual("camera", self.plugin._settings.get(["imageSourceAfterPrint"]))
+        self.assertIsNone(self.plugin._settings.get(["preferedImageSource"]))
+
+    def test_settingsVersionOfThePreviousInstallIsNotCopied(self):
+        # it describes the other plugin's settings format, and would skip our own migrations
+        self.plugin._settings = FakeSettings(self.baseFolder, {"_config_version": 3, "currencySymbol": "GBP"})
+
+        result = self.plugin._performLegacyMigration(includeSettings=True)
+
+        self.assertTrue(result["settingsMigrated"])
+        self.assertIsNone(self.plugin._settings.get(["_config_version"]))
+
     # ------------------------------------------------------------------ undo
 
     def test_undoRestoresReplacedDatabase(self):

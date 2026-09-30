@@ -72,14 +72,23 @@ class SettingsKeys():
 	SETTINGS_DEFAULT_VALUE_MULTI_PRINTJOB_REPORT_TEMPLATENAME = "defaultMultiPrintJobReport"
 
 	## Camera
-	SETTINGS_KEY_TAKE_SNAPSHOT_AFTER_PRINT = "takeSnapshotAfterPrint"
-	SETTINGS_KEY_TAKE_PLUGIN_THUMBNAIL_AFTER_PRINT = "takePluginThumbnailAfterPrint"
+	# Where the image of a finished print job comes from. When the chosen source has no
+	# image to give, the other one is tried, see _grabImageInBackground.
+	SETTINGS_KEY_IMAGE_SOURCE = "imageSourceAfterPrint"
+	KEY_IMAGE_SOURCE_CAMERA = "camera"
+	KEY_IMAGE_SOURCE_THUMBNAIL = "thumbnail"
+	KEY_IMAGE_SOURCE_NONE = "none"
+	# Only with the camera as source: take the snapshot when the printer asks for it, not at
+	# the end of the print. The key keeps its old (misspelled) name so stored values survive.
 	SETTINGS_KEY_TAKE_SNAPSHOT_ON_M118_COMMAND = "takeSnapshotOnM118Commnd"
-	SETTINGS_KEY_TAKE_SNAPSHOT_ON_GCODE_COMMAND = "takeSnapshotOnGCodeCommnd"
-	SETTINGS_KEY_TAKE_SNAPSHOT_GCODE_COMMAND_PATTERN = "takeSnapshotGCodeCommndPattern"
-	SETTINGS_KEY_PREFERED_IMAGE_SOURCE = "preferedImageSource"
-	KEY_PREFERED_IMAGE_SOURCE_THUMBNAIL = "thumbnail"
-	KEY_PREFERED_IMAGE_SOURCE_CAMERA = "camera"
+
+	# Replaced by SETTINGS_KEY_IMAGE_SOURCE, only ever read to migrate old configs,
+	# see CameraSettingsMigration.
+	LEGACY_SETTINGS_KEY_TAKE_SNAPSHOT_AFTER_PRINT = "takeSnapshotAfterPrint"
+	LEGACY_SETTINGS_KEY_TAKE_PLUGIN_THUMBNAIL_AFTER_PRINT = "takePluginThumbnailAfterPrint"
+	LEGACY_SETTINGS_KEY_TAKE_SNAPSHOT_ON_GCODE_COMMAND = "takeSnapshotOnGCodeCommnd"
+	LEGACY_SETTINGS_KEY_TAKE_SNAPSHOT_GCODE_COMMAND_PATTERN = "takeSnapshotGCodeCommndPattern"
+	LEGACY_SETTINGS_KEY_PREFERED_IMAGE_SOURCE = "preferedImageSource"
 
 	# Temperatrue
 	SETTINGS_KEY_DEFAULT_TOOL_ID = "defaultTemperatureToolId"

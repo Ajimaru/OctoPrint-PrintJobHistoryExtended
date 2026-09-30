@@ -55,8 +55,8 @@ This fork is maintained by [Ajimaru](https://github.com/Ajimaru).
 - [x] Filter history table
 - [x] Sort history table
 - [x] Table column visibility
-- [x] Capture image after print
-- [x] Take Thumbnail from [Cura Thumbnails](https://plugins.octoprint.org/plugins/UltimakerFormatPackage/) and [PrusaSlicer Thumbnails](https://plugins.octoprint.org/plugins/prusaslicerthumbnails/)
+- [x] Image after print, selectable in the settings: a webcam snapshot (through OctoPrint's webcam system, turned as configured there, optionally at the moment the gcode sends `M118 //action:pjhTakeSnapshot`) or the file's preview image (the slicer thumbnail in the G-code/3MF, also for files stored on Moonraker or Bambu Lab printers). If the chosen source has no image, the other one is used.
+- [x] Preview images stored by [Cura Thumbnails](https://plugins.octoprint.org/plugins/UltimakerFormatPackage/) and [PrusaSlicer Thumbnails](https://plugins.octoprint.org/plugins/prusaslicerthumbnails/) are used for files OctoPrint has no preview of itself
 - [x] Export all printjobs as CSV
 - [x] Import printjobs from CSV
 - [x] Compare Slicer-Settings

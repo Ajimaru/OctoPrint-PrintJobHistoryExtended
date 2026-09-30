@@ -2,19 +2,18 @@
 from __future__ import absolute_import
 import urllib.parse
 
+import io
 import shutil
 import threading
 import datetime
-import requests
-from io import open as i_open
 from PIL import Image
 from PIL import ImageFile
+from octoprint.webcams import get_snapshot_webcam
 
 import logging
 import os.path
 import os
 import zipfile
-from io import StringIO
 
 SNAPSHOT_BACKUP_FILENAME = "snapshots-backup-{timestamp}.zip"
 
@@ -22,14 +21,8 @@ class CameraManager(object):
 
     def __init__(self, parentLogger):
         self._logger = logging.getLogger(parentLogger.name + "." + self.__class__.__name__)
-        self._streamUrl = None
-        self._snapshotUrl = None
 
         self._snapshotStoragePath = None
-
-    @staticmethod
-    def doSomething():
-        print("Hello World")
 
     @staticmethod
     def buildSnapshotFilename(startDateTime):
@@ -37,8 +30,7 @@ class CameraManager(object):
         return dateTimeThumb
 
 
-    # def initCamera(self, enabled, streamUrl, snapshotUrl, snapshotStoragePath, pluginBaseFolder, rotate = None, flipH = None, flipV = None):
-    def initCamera(self, pluginDataBaseFolder, pluginBaseFolder, globalSettings):
+    def initCamera(self, pluginDataBaseFolder, pluginBaseFolder):
         self._logger.info("Init CameraManager")
 
         snapshotStoragePath = pluginDataBaseFolder + "/snapshots"
@@ -49,7 +41,6 @@ class CameraManager(object):
         self._snapshotStoragePath = snapshotStoragePath
         self._pluginDataBaseFolder = pluginDataBaseFolder
         self._pluginBaseFolder = pluginBaseFolder
-        self._globalSettings = globalSettings
 
         self._logger.info("Done CameraMenager")
 
@@ -57,10 +48,6 @@ class CameraManager(object):
     def getSnapshotFileLocation(self):
         return self._snapshotStoragePath
 
-
-    # NOT WORKING IN 1.3.10
-    # def isVideoStreamEnabled(self):
-    #   self._globalSettings.global_get(["webcam", "webcamEnabled"])
 
     def isSnapshotPresent(self, snapshotFilename):
         imageLocation = self.buildSnapshotFilenameLocation(snapshotFilename, False)
@@ -147,149 +134,156 @@ class CameraManager(object):
             zipf.write(os.path.join(path), path)
         zipf.close()
 
-    def isCamaraSnahotURLPresent(self):
-        snapshotUrl = self._globalSettings.global_get(["webcam", "snapshot"])
-        if (snapshotUrl == None or len(str(snapshotUrl).strip()) == 0):
-            return False
-        return True
 
-    # def _zipdir(self, path, zipfile_handle):
-    #   # walk over all files an add it to the zip
-    #   for root, dirs, files in os.walk(path):
-    #       for file in files:
-    #           # zipfile_handle.write(os.path.join(root, file))
-    #           zipfile_handle.write(os.path.relpath(os.path.join(root, file), os.path.join(path, '..')))
-    def takeSnapshot(self, snapshotFilename, sendErrorMessageToClientFunction, callbackFunction=None):
+    #######################################################################################   WEBCAM
 
-        if str(snapshotFilename).endswith(".png"):
-            snapshotFilename = self._snapshotStoragePath + "/" +snapshotFilename
-        else:
-            snapshotFilename = self._snapshotStoragePath + "/" +snapshotFilename + ".png"
+    def getSnapshotWebcam(self):
+        """
+        The webcam OctoPrint takes snapshots with ("Webcam & Timelapse" settings), or None
+        when none of the configured webcams can take one.
 
-        snapshotThumbnailFilename = self._snapshotStoragePath + "/" +snapshotFilename+ "-thumbnail.png"
-
-
-        # streamUrl = self._settings.global_get(["webcam", "stream"])
-        snapshotUrl =  self._globalSettings.global_get(["webcam", "snapshot"])
-
-        self._logger.info("Try taking snapshot '" + snapshotFilename + "' from '" + snapshotUrl + "'")
-        if (snapshotUrl == None or len(str(snapshotUrl).strip()) == 0):
-            self._logger.info("No snapshot camera url defined!")
-            if (callbackFunction != None):
-                callbackFunction(False)
-            return
-
-        rotate = self._globalSettings.global_get(["webcam", "rotate90"])
-        flipH = self._globalSettings.global_get(["webcam", "flipH"])
-        flipV = self._globalSettings.global_get(["webcam", "flipV"])
-
+        Deliberately OctoPrint's webcam system and not the global "webcam.snapshot" URL: that
+        one is only a deprecated compatibility view of the default webcam since OctoPrint 1.9.
+        It lacks the orientation, ignores the chosen snapshot webcam and is going away.
+        """
         try:
-            response = requests.get(snapshotUrl, verify=not True,timeout=float(10))
-            if response.status_code == requests.codes.ok:
-                self._logger.info("Process snapshot image")
-                with i_open(snapshotFilename, 'wb') as snapshot_file:
-                    for chunk in response.iter_content(1024):
-                        if chunk:
-                            snapshot_file.write(chunk)
+            webcam = get_snapshot_webcam()
+        except Exception as error:
+            self._logger.exception("Could not look up the snapshot webcam: " + str(error))
+            return None
+        if (webcam is None or webcam.config is None or webcam.config.canSnapshot != True):
+            return None
+        return webcam
 
-                # adjust orientation
-                if flipH or flipV or rotate:
-                    image = Image.open(snapshotFilename)
-                    if flipH:
-                        image = image.transpose(Image.FLIP_LEFT_RIGHT)
-                    if flipV:
-                        image = image.transpose(Image.FLIP_TOP_BOTTOM)
-                    if rotate:
-                        # image = image.transpose(Image.ROTATE_270)
-                        image = image.transpose(Image.ROTATE_90)
-                    # output = StringIO.StringIO()
-                    image.save(snapshotFilename, format="PNG")
-                    self._logger.info("Image stored to '" + snapshotFilename + "'")
-                    # data = output.getvalue()
-                    # output.close()
+    def takeSnapshot(self, snapshotFilename, sendErrorMessageToClientFunction=None, callbackFunction=None):
+        """
+        Stores a snapshot of the snapshot webcam as the image of a print job. Returns whether
+        an image was stored, and hands the same answer to callbackFunction.
+        """
+        snapshotLocation = self._buildImageLocation(snapshotFilename)
+        success = False
 
-                # without this I get errors during load (happens in resize, where the image is actually loaded)
-                ImageFile.LOAD_TRUNCATED_IMAGES = True
+        webcam = self.getSnapshotWebcam()
+        if (webcam is None):
+            self._logger.info("No webcam that can take snapshots is configured, no snapshot taken")
+            if (sendErrorMessageToClientFunction != None):
+                sendErrorMessageToClientFunction("Take Snapshot", "No webcam that can take snapshots is configured in OctoPrint.")
+        else:
+            webcamConfig = webcam.config
+            self._logger.info("Try taking snapshot '" + snapshotLocation + "' from webcam '" + str(webcamConfig.name) + "' provided by '" + str(webcam.providerIdentifier) + "'")
+            try:
+                # authentication, timeout and certificate checks are up to the provider
+                snapshot = webcam.providerPlugin.take_webcam_snapshot(webcamConfig.name)
+                imageData = b"".join(chunk for chunk in snapshot if chunk)
+                imageData = self._applyWebcamOrientation(imageData, webcamConfig)
+                self._writeImageFile(snapshotLocation, imageData)
+                self._logger.info("Snapshot stored to '" + snapshotLocation + "'")
+                success = True
+            except Exception as error:
+                self._logger.exception("Could not take a snapshot from webcam '" + str(webcamConfig.name) + "': " + str(error))
+                if (sendErrorMessageToClientFunction != None):
+                    sendErrorMessageToClientFunction("Take Snapshot", "Unable to get a snapshot from webcam '" + str(webcamConfig.displayName) + "': " + str(error))
 
-                ############################################## create a snapshot of the image
-                # TODO not used at the moment
-                # basewidth = 50
-                # img = Image.open(snapshotFilename)
-                # wpercent = (basewidth / float(img.size[0]))
-                # hsize = int((float(img.size[1]) * float(wpercent)))
-                # img = img.resize((basewidth, hsize), Image.ANTIALIAS)
-                # img.save(snapshotThumbnailFilename, "JPEG")
-                if (callbackFunction != None):
-                    callbackFunction(True)
-            else:
-                self._logger.error("Invalid response code from snapshot-url. Code:" + str(response.status_code))
-                if (callbackFunction != None):
-                    callbackFunction(False)
-        except (Exception) as error:
-            sendErrorMessageToClientFunction("Take Snapshot", "Unable to get snapshot from URL: " + snapshotUrl)
-            self._logger.error(error)
-            if (callbackFunction != None):
-                callbackFunction(False)
+        if (callbackFunction != None):
+            callbackFunction(success)
+        return success
 
-    def takeSnapshotAsync(self, snapshotFilename, sendErrorMessageToClientFunction, callbackFunction=None):
+    def takeSnapshotAsync(self, snapshotFilename, sendErrorMessageToClientFunction=None, callbackFunction=None):
         thread = threading.Thread(name='TakeSnapshot', target=self.takeSnapshot, args=(snapshotFilename, sendErrorMessageToClientFunction, callbackFunction,))
         thread.daemon = True
         thread.start()
 
+    # Webcam images arrive the way the camera sees them. OctoPrint only turns them in the
+    # browser and when rendering a timelapse, so a stored snapshot has to be turned here, in
+    # the timelapse's order: flip horizontally, flip vertically, rotate 90 degrees
+    # counter-clockwise.
+    def _applyWebcamOrientation(self, imageData, webcamConfig):
+        if (len(imageData) == 0):
+            raise ValueError("The webcam delivered an empty image")
 
-    def takePluginThumbnail(self, snapshotFilename, thumbnailLocation, storeImage = True):
+        # without this, the truncated frames some webcams deliver fail to load
+        ImageFile.LOAD_TRUNCATED_IMAGES = True
+        # parses the header, so an error page delivered instead of an image fails right here
+        image = Image.open(io.BytesIO(imageData))
 
-        if str(snapshotFilename).endswith(".png"):
-            snapshotFilename = self._snapshotStoragePath + "/" + snapshotFilename
-            convert = False
-        else:
-            snapshotFilename = self._snapshotStoragePath + "/" + snapshotFilename + ".png"
-            convert = True
+        flipH = webcamConfig.flipH == True
+        flipV = webcamConfig.flipV == True
+        rotate90 = webcamConfig.rotate90 == True
+        if (flipH == False and flipV == False and rotate90 == False):
+            return imageData
 
+        if (flipH):
+            image = image.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+        if (flipV):
+            image = image.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+        if (rotate90):
+            image = image.transpose(Image.Transpose.ROTATE_90)
+        # stays a JPEG: as PNG a camera picture grows about tenfold
+        output = io.BytesIO()
+        image.convert("RGB").save(output, format="JPEG", quality=90)
+        return output.getvalue()
+
+    #######################################################################################   PREVIEW IMAGE
+
+    def storeThumbnail(self, snapshotFilename, imageData):
+        """Stores a slicer preview image (bytes of any format PIL reads) as the image of a print job."""
+        snapshotLocation = self._buildImageLocation(snapshotFilename)
+        with Image.open(io.BytesIO(imageData)) as image:
+            self._writeImageFile(snapshotLocation, self._toThumbnailPng(image))
+        self._logger.info("Preview image stored to '" + snapshotLocation + "'")
+        return True
+
+    # Preview images stored by a thumbnail plugin, referenced from the file's metadata as
+    # "plugin/{plugin_folder}/thumbnail/{image_path}"
+    def takePluginThumbnail(self, snapshotFilename, thumbnailLocation):
         # clear timestamp in path
         thumbnailLocation = thumbnailLocation.split("?", 1)[0]
 
-        # url path in format plugin/{plugin_folder}/thumbnail/{image_path}
         splitPath = thumbnailLocation.split("/", 3)
-
         if (len(splitPath) != 4):
             self._logger.error("Can not split thumbnail path '" + thumbnailLocation + "'")
             return False
 
         pluginFolder = splitPath[1]
-        thumbnailName = splitPath[3]
-
         # account for encoded filenames from the metadata
-        thumbnailName = urllib.parse.unquote( thumbnailName )
+        thumbnailName = urllib.parse.unquote(splitPath[3])
 
         thumbnailLocation = self._pluginDataBaseFolder + "/../" + pluginFolder + "/" + thumbnailName
+        if (os.path.isfile(thumbnailLocation) == False):
+            self._logger.error("Thumbnail doesn't exists in: '" + thumbnailLocation + "'")
+            return False
 
-        if os.path.isfile(thumbnailLocation):
-            if (storeImage):
-                self._logger.info("Try converting thumbnail '" + thumbnailLocation + "' to '" + snapshotFilename + "'")
+        snapshotLocation = self._buildImageLocation(snapshotFilename)
+        self._logger.info("Try converting thumbnail '" + thumbnailLocation + "' to '" + snapshotLocation + "'")
+        with Image.open(thumbnailLocation) as image:
+            self._writeImageFile(snapshotLocation, self._toThumbnailPng(image))
+        self._logger.info("Converting successfull!")
+        return True
 
-                if convert == True:
-                    im = Image.open(thumbnailLocation).convert("RGBA")
-                    # fill_color = (120, 8, 220)
-                    # bg = Image.new("RGB", im.size, fill_color) see https://github.com/OllisGit/OctoPrint-PrintJobHistory/issues/160
-                    bg = Image.new("RGBA", im.size, (255, 255, 255, 9))
-                    bg.paste(im, im)
-                    bg.save(snapshotFilename, 'PNG')
-                    self._logger.info("Converting successfull!")
-                else:
-                    im.save(snapshotFilename, 'PNG')
-                    self._logger.info("PNG Saved!")
+    # Slicer previews are transparent around the model. A barely visible white background
+    # keeps them readable on light and dark themes alike,
+    # see https://github.com/OllisGit/OctoPrint-PrintJobHistory/issues/160
+    def _toThumbnailPng(self, image):
+        image = image.convert("RGBA")
+        background = Image.new("RGBA", image.size, (255, 255, 255, 9))
+        background.paste(image, image)
+        output = io.BytesIO()
+        background.save(output, format="PNG")
+        return output.getvalue()
 
-                # rgb_im = im.convert('RGB')
-                # rgb_im.save(snapshotFilename, 'JPEG')
-            else:
-                self._logger.info("Thumbnail is present")
-            return True
-        else:
-            self._logger.error("Thumbnail doesn't exists in: '"+thumbnailLocation+"'")
-        return False
+    #######################################################################################   IMAGE FILES
 
-    # def takeThumbnailAsync(self, snapshotFilename, thumbnailLocation):
-    #   thread = threading.Thread(name='TakeThumbnail', target=self.takePluginThumbnail, args=(snapshotFilename,thumbnailLocation))
-    #   thread.daemon = True
-    #   thread.start()
+    # The name comes from buildSnapshotFilename and ends in ".jpg", the stored file has always
+    # carried ".png" on top. Kept like that, otherwise the existing images would not be found.
+    def _buildImageLocation(self, snapshotFilename):
+        if str(snapshotFilename).endswith(".png"):
+            return self._snapshotStoragePath + "/" + snapshotFilename
+        return self._snapshotStoragePath + "/" + snapshotFilename + ".png"
+
+    # Written next to the target and then moved over it: the image may be requested by a
+    # browser at any moment, and half a file would be served as a broken image.
+    def _writeImageFile(self, imageLocation, imageData):
+        temporaryLocation = imageLocation + ".part"
+        with open(temporaryLocation, "wb") as imageFile:
+            imageFile.write(imageData)
+        os.replace(temporaryLocation, imageLocation)

@@ -610,6 +610,18 @@ function PrintJobHistoryExtendedEditDialog(){
         $("#printJobHistoryExtended-cancelCaptureButton").hide();
     }
 
+    // The image of a finished print is taken in the background and may arrive while the
+    // dialog for that print is already open.
+    this.refreshSnapshotImage = function(snapshotFilename){
+        if (self.printJobItemForEdit == null || self.snapshotImage == null){
+            return;
+        }
+        if (self.printJobItemForEdit.snapshotFilename() != snapshotFilename){
+            return;
+        }
+        self.snapshotImage.attr("src", self.apiClient.getSnapshotUrl(snapshotFilename) + "?" + new Date().getTime()); // cache breaker
+    }
+
     /////////////////////////////////////////////////////////////////////////////////////////////////// UPLOAD IMAGE
     this.performSnapshotUpload = function() {
         if (self.snapshotUploadData === undefined) return;

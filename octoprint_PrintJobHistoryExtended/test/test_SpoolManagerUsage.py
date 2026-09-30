@@ -244,6 +244,15 @@ class TemperatureTestCase(unittest.TestCase):
 													 "tool1": {"target": 250.0}})
 		self.assertEqual(highest, {"bed": 90.0, "tool0": 54.0, "tool1": 250.0})
 
+	def test_heaterTheConnectorHasNoNameForIsSkipped(self):
+		# the Moonraker connector reports "heater_generic panda_breath" under None; it used to
+		# fail the whole sample, bed and nozzle included
+		plugin = createPlugin()
+		highest = {}
+		plugin._collectHighestTemperatures(highest, {"bed": {"target": 60.0}, None: {"target": 45.0},
+													 "tool0": {"target": 0, "actual": 32.0}})
+		self.assertEqual(highest, {"bed": 60.0, "tool0": 32.0})
+
 	def test_usedToolThePrinterDoesNotReportIsUnknown(self):
 		# A tool changer printing on its 4th head while the connector only reports the first:
 		# the parked head's 54 degrees must not be stored as the nozzle temperature.
