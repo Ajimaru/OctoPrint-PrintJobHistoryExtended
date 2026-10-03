@@ -185,6 +185,88 @@ class PrintJobUsageReportTestCase(DatabaseTestCase):
 		self.assertEqual(stored.getFilamentModelByToolId("tool3").usedLength, 5737.0)
 		self.assertEqual(stored.getFilamentModelByToolId("total").usedLength, 5737.0)
 
+	def test_reportFillsAJobStoredWithoutFilament(self):
+		plugin = createPlugin()
+		printJob = PrintJobModel()
+		printJob.fileOrigin = "local"
+		printJob.fileName = "Rocket.gcode"
+		printJob.filePathName = "Rocket.gcode"
+		printJob.printStartDateTime = PRINT_START
+		printJob.save()
+		self.waitFor(plugin, printJob)
+
+		toolUsage = {"toolIndex": 0, "databaseId": 31, "spoolName": "Orange", "vendor": "Kingroon",
+					 "material": "PLA", "diameter": 1.75, "density": 1.23, "usedLength": 653.24,
+					 "usedWeight": 1.93, "usedCost": 0.0155, "source": "odometer"}
+		job = {"origin": "local", "path": "Rocket.gcode", "name": "Rocket.gcode",
+			   "printStartDateTime": PRINT_START.isoformat()}
+		plugin._onPrintJobUsageBookedByPeer(usageReport([toolUsage], job=job, printStatus="failed"))
+
+		stored = PrintJobModel.get_by_id(printJob.get_id())
+		tool0 = stored.getFilamentModelByToolId("tool0")
+		self.assertEqual((tool0.usedLength, tool0.spoolName, tool0.vendor, tool0.density), (653.24, "Orange", "Kingroon", 1.23))
+		total = stored.getFilamentModelByToolId("total")
+		self.assertEqual((total.usedLength, total.usedWeight, total.spoolName, total.material), (653.24, 1.93, "Orange", "PLA"))
+
+	def test_spoolChangedDuringTheJobNamesAllSpools(self):
+		plugin = createPlugin()
+		printJob = self.createStoredPrintJob()
+		self.waitFor(plugin, printJob)
+
+		toolUsage = dict(TOOL3_USAGE, spoolName="Black", vendor="Sunlu", material="PETG", spools=[
+			{"databaseId": 31, "spoolName": "Orange", "vendor": "Kingroon", "material": "PLA", "usedLength": 2000.0},
+			{"databaseId": 32, "spoolName": "Black", "vendor": "Sunlu", "material": "PETG", "usedLength": 3737.0}])
+		plugin._onPrintJobUsageBookedByPeer(usageReport([None, None, None, toolUsage]))
+
+		stored = PrintJobModel.get_by_id(printJob.get_id())
+		tool3 = stored.getFilamentModelByToolId("tool3")
+		self.assertEqual((tool3.usedLength, tool3.spoolName, tool3.vendor), (5737.0, "Orange, Black", "Kingroon, Sunlu"))
+		self.assertEqual(stored.getFilamentModelByToolId("total").material, "PLA, PETG")
+
+	def test_singleSpoolKeepsTheCapturedSpool(self):
+		plugin = createPlugin()
+		printJob = self.createStoredPrintJob()
+		tool3 = printJob.getFilamentModelByToolId("tool3")
+		tool3.spoolName = "Captured"
+		tool3.save()
+		self.waitFor(plugin, printJob)
+
+		toolUsage = dict(TOOL3_USAGE, spoolName="Reported", spools=[
+			{"databaseId": 31, "spoolName": "Reported", "usedLength": 5737.0}])
+		plugin._onPrintJobUsageBookedByPeer(usageReport([None, None, None, toolUsage]))
+
+		stored = PrintJobModel.get_by_id(printJob.get_id())
+		self.assertEqual(stored.getFilamentModelByToolId("tool3").spoolName, "Captured")
+
+	def test_perToolEventIsIgnoredWhenThePeerReportsWholeJobs(self):
+		# After a pause the per-tool event only carries the part since the pause; the
+		# report that follows carries the whole job and must not be replaced by it
+		spoolManager = mock.Mock(spec=["api_getJobFilamentUsage", "api_getLastPrintJobUsage"])
+		plugin = createPlugin(spoolManager)
+		printJob = self.createStoredPrintJob()
+		self.waitFor(plugin, printJob)
+
+		perToolEvent = {"toolId": 3, "usedLength": 1200.0, "usedWeight": 3.0, "usedCost": 0.05,
+						"source": "odometer", "printStatus": "success"}
+		plugin._onPrintJobUsageBookedByPeer(usageReport([None, None, None, TOOL3_USAGE]))
+		plugin._onSpoolUsageBookedByPeer(perToolEvent)
+
+		stored = PrintJobModel.get_by_id(printJob.get_id())
+		self.assertEqual(stored.getFilamentModelByToolId("tool3").usedLength, 5737.0)
+		self.assertEqual(len(plugin._databaseManager.updatedPrintJobs), 1)
+
+	def test_perToolEventStillFillsTheJobForAnOlderPeer(self):
+		spoolManager = mock.Mock(spec=["api_getLastPrintJobUsage"])
+		plugin = createPlugin(spoolManager)
+		printJob = self.createStoredPrintJob()
+		self.waitFor(plugin, printJob)
+
+		plugin._onSpoolUsageBookedByPeer({"toolId": 3, "usedLength": 5737.0, "usedWeight": 14.5,
+										  "usedCost": 0.21, "source": "odometer", "printStatus": "success"})
+
+		stored = PrintJobModel.get_by_id(printJob.get_id())
+		self.assertEqual(stored.getFilamentModelByToolId("tool3").usedLength, 5737.0)
+
 
 class JobFilamentUsageTestCase(unittest.TestCase):
 

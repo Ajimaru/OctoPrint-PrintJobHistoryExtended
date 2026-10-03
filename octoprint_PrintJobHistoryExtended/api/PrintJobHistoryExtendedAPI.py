@@ -77,13 +77,39 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
 
         return blueprint
 
+    # The dialog only shows rounded values - lengths in metres, weights and costs with two
+    # decimals, times to the minute - and sends exactly those back on save. Taken over as
+    # they came in, every save degraded the job a little more, even without a change (K9 job
+    # 147: 562.66 mm became 560 mm, an electricity cost of 0.00175 became 0). A value
+    # within the display rounding of the stored one was not changed by the user.
+    def _keepStoredUnlessChanged(self, storedValue, newValue, displayStep):
+        if (storedValue == None or newValue == None):
+            return newValue
+        try:
+            if (abs(float(storedValue) - float(newValue)) <= displayStep / 2.0 + 1e-9):
+                return storedValue
+        except (TypeError, ValueError):
+            pass
+        return newValue
+
+    def _keepStoredDateTimeUnlessChanged(self, storedDateTime, newDateTime):
+        if (storedDateTime == None or newDateTime == None):
+            return newDateTime
+        if (storedDateTime.replace(second=0, microsecond=0) == newDateTime):
+            return storedDateTime
+        return newDateTime
+
+    def _readDateTimeFromJson(self, key, jsonData, storedDateTime):
+        newDateTime = StringUtils.transformToDateTimeOrNone(self._getValueFromJSONOrNone(key, jsonData))
+        return self._keepStoredDateTimeUnlessChanged(storedDateTime, newDateTime)
+
     def _updatePrintJobFromJson(self, printJobModel,  jsonData):
         # transfer header values
         printJobModel.userName = self._getValueFromJSONOrNone("userName", jsonData)
         printJobModel.fileName = self._getValueFromJSONOrNone("fileName", jsonData)
         # printJobModel.filePathName = self._getValueFromJSONOrNone("fileName", jsonData) # pech
-        printJobModel.printStartDateTime = StringUtils.transformToDateTimeOrNone(self._getValueFromJSONOrNone("printStartDateTimeFormatted", jsonData))
-        printJobModel.printEndDateTime = StringUtils.transformToDateTimeOrNone(self._getValueFromJSONOrNone("printEndDateTimeFormatted", jsonData))
+        printJobModel.printStartDateTime = self._readDateTimeFromJson("printStartDateTimeFormatted", jsonData, printJobModel.printStartDateTime)
+        printJobModel.printEndDateTime = self._readDateTimeFromJson("printEndDateTimeFormatted", jsonData, printJobModel.printEndDateTime)
         printJobModel.duration = self._getValueFromJSONOrNone("duration", jsonData)
         printJobModel.printedHeight = self._getValueFromJSONOrNone("printedHeight", jsonData)
         printJobModel.printedLayers = self._getValueFromJSONOrNone("printedLayers", jsonData)
@@ -97,14 +123,25 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
         printJobModel.printedHeight = self._getValueFromJSONOrNone("printedHeight", jsonData)
 
         filamentModelTotal = printJobModel.getFilamentModelByToolId("total")
+        if (filamentModelTotal == None):
+            # A capture that failed half way stored the job without its "total" row, and
+            # the job could then not be saved at all
+            filamentModelTotal = FilamentModel()
+            filamentModelTotal.toolId = "total"
+            printJobModel.addFilamentModel(filamentModelTotal)
 
         filamentModelTotal.vendor = self._getValueFromJSONOrNone("vendor", jsonData)
         filamentModelTotal.spoolName = self._getValueFromJSONOrNone("spoolName", jsonData)
         filamentModelTotal.material = self._getValueFromJSONOrNone("material", jsonData)
-        filamentModelTotal.usedLength = self._convertM2MM(self._getValueFromJSONOrNone("usedLengthFormatted", jsonData))
-        filamentModelTotal.calculatedLength = self._convertM2MM(self._getValueFromJSONOrNone("calculatedLengthFormatted", jsonData))
-        filamentModelTotal.usedWeight = self._getValueFromJSONOrNone("usedWeight", jsonData)
-        filamentModelTotal.usedCost = self._getValueFromJSONOrNone("usedCost", jsonData)
+        # lengths are shown in metres with two decimals, i.e. in steps of 10 mm
+        filamentModelTotal.usedLength = self._keepStoredUnlessChanged(filamentModelTotal.usedLength,
+            self._convertM2MM(self._getValueFromJSONOrNone("usedLengthFormatted", jsonData)), 10.0)
+        filamentModelTotal.calculatedLength = self._keepStoredUnlessChanged(filamentModelTotal.calculatedLength,
+            self._convertM2MM(self._getValueFromJSONOrNone("calculatedLengthFormatted", jsonData)), 10.0)
+        filamentModelTotal.usedWeight = self._keepStoredUnlessChanged(filamentModelTotal.usedWeight,
+            self._getValueFromJSONOrNone("usedWeight", jsonData), 0.01)
+        filamentModelTotal.usedCost = self._keepStoredUnlessChanged(filamentModelTotal.usedCost,
+            self._getValueFromJSONOrNone("usedCost", jsonData), 0.01)
 
         # temperatureModel = TemperatureModel
         if (printJobModel.databaseId != None):
@@ -113,13 +150,17 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
             allTemperaturesModels = printJobModel.allTemperatures
         for tempModel in allTemperaturesModels:
             sensorName = StringUtils.to_native_str(tempModel.sensorName)
+            # sensorValue is NOT NULL: a value the request does not carry keeps the stored
+            # one, instead of failing the whole save
             if (sensorName == "bed"):
                 newBedTemp = self._getValueFromJSONOrNone("temperatureBed", jsonData)
-                tempModel.sensorValue = newBedTemp
+                if (newBedTemp != None):
+                    tempModel.sensorValue = newBedTemp
                 continue
             if (sensorName.startswith("tool")):
                 newToolTemp = self._getValueFromJSONOrNone("temperatureNozzle", jsonData)
-                tempModel.sensorValue = newToolTemp
+                if (newToolTemp != None):
+                    tempModel.sensorValue = newToolTemp
 
         # Costs (if present)
         totalCosts = self._toFloatFromJSONOrNone("totalCosts", jsonData)
@@ -142,13 +183,19 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
             else:
                 costs = printJobModel.getCosts()
 
-            costs.totalCosts = totalCosts
-            costs.filamentCost = filamentCost
-            costs.electricityCost = electricityCost
-            costs.printerCost = printerCost
+            costs.filamentCost = self._keepStoredUnlessChanged(costs.filamentCost, filamentCost, 0.01)
+            costs.electricityCost = self._keepStoredUnlessChanged(costs.electricityCost, electricityCost, 0.01)
+            costs.printerCost = self._keepStoredUnlessChanged(costs.printerCost, printerCost, 0.01)
             costs.otherCostLabel = otherCostLabel
-            costs.otherCost = otherCost
+            costs.otherCost = self._keepStoredUnlessChanged(costs.otherCost, otherCost, 0.01)
             costs.withDefaultSpoolValues = withDefaultSpoolValues
+            # The dialog cannot edit the total, it adds up the rounded parts itself. Added up
+            # here from the parts as stored, it stays exact.
+            allParts = [costs.filamentCost, costs.electricityCost, costs.printerCost, costs.otherCost]
+            if (any(part != None for part in allParts)):
+                costs.totalCosts = sum(StringUtils.transformToFloatOrZero(part) for part in allParts)
+            else:
+                costs.totalCosts = self._keepStoredUnlessChanged(costs.totalCosts, totalCosts, 0.01)
 
         return printJobModel
 
@@ -438,7 +485,9 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
             printJobModel = self._databaseManager.loadPrintJob(databaseId)
             # check if the startDate is changed, if true -> change snapshot image as well
             currentStartDateTime = printJobModel.printStartDateTime
-            newStartDateTime = StringUtils.transformToDateTimeOrNone(self._getValueFromJSONOrNone("printStartDateTimeFormatted", jsonData))
+            # Same rule as for the stored value: the dialog shows the minute only, so an
+            # untouched start time must not count as a change and rename the snapshot
+            newStartDateTime = self._readDateTimeFromJson("printStartDateTimeFormatted", jsonData, currentStartDateTime)
             changed = currentStartDateTime != newStartDateTime
             if (changed):
                 oldStartDateTimeIfChanged = currentStartDateTime
@@ -474,7 +523,7 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
             self._databaseManager.insertPrintJob(printJobModel)
         else:
 
-            self._databaseManager.updatePrintJob(printJobModel, imageRollbackHandler)
+            self._databaseManager.updatePrintJob(printJobModel, imageRollbackHandler, withTemperatures=True)
 
         return flask.jsonify()
 

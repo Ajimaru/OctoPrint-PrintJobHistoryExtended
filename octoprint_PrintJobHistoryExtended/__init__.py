@@ -420,8 +420,8 @@ class PrintJobHistoryExtendedPlugin(
 	def _createAndAssignFilamentModel(self, printJob, payload):
 
 		self._logger.info("----- Start reading filament -----")
-		filePath = payload["path"]
-		fileData = self._readFileMetaData(payload["origin"], filePath)
+		filePath = payload.get("path")
+		fileData = self._readFileMetaData(payload.get("origin"), filePath)
 
 		# - grab calcualted data for each tool
 		# - grap measured data for each tool
@@ -746,6 +746,10 @@ class PrintJobHistoryExtendedPlugin(
 
 
 	def _updatePrintJobModelWithLayerHeightInfos(self, dlpPayload):
+		# DisplayLayerProgress reports the height while no print is running as well, e.g. when
+		# the Z axis is jogged by hand. There is no job to attribute it to then.
+		if (self._currentPrintJobModel == None):
+			return
 		totalLayers = dlpPayload["totalLayer"]
 		currentLayer = dlpPayload["currentLayer"]
 		self._currentPrintJobModel.printedLayers = currentLayer + " / " + totalLayers
@@ -906,6 +910,15 @@ class PrintJobHistoryExtendedPlugin(
 		if (payload == None):
 			return
 
+		# A SpoolManagerExtended that reports the whole job (print_job_usage_booked, shipped
+		# together with api_getJobFilamentUsage) makes this event redundant, and wrong for a
+		# job that was paused: it only carries what was booked since the last pause, while
+		# the report adds up the whole job. Applied after the report it would replace the
+		# job's total with that last part.
+		if (self._doesPeerReportWholePrintJobs() == True):
+			self._logger.info("Ignoring spool usage event for tool '" + str(payload.get("toolId")) + "' (status '" + str(payload.get("printStatus")) + "'), SpoolManagerExtended reports the whole print job separately")
+			return
+
 		# The same event is fired for a spool change in the MIDDLE of a print (the
 		# selectSpool endpoint commits the odometer before switching), and there is no
 		# printStatus then. Booking that as a job end would count the partial usage twice
@@ -1028,6 +1041,7 @@ class PrintJobHistoryExtendedPlugin(
 		for toolUsage in allToolUsages:
 			toolId = "tool" + str(toolUsage.get("toolIndex"))
 			filamentModel = self._assignToolUsage(printJobModel, toolId, toolUsage)
+			self._assignToolSpools(filamentModel, toolUsage)
 			self._logger.info("Backfilled " + toolId + " of print job '" + str(databaseId) + "' from the job report: usedLength='" + str(filamentModel.usedLength) + "'; usedWeight='" + str(filamentModel.usedWeight) + "'; usedCost='" + str(filamentModel.usedCost) + "' (source '" + str(toolUsage.get("source", payload.get("source"))) + "')")
 
 		self._storeBackfilledPrintJob(databaseId, printJobModel)
@@ -1077,6 +1091,41 @@ class PrintJobHistoryExtendedPlugin(
 		return filamentModel
 
 
+	# The spool(s) the report booked the tool's usage on. Several when the spool was changed
+	# during the job: the row then names all of them, in the order they were used. A row the
+	# capture could not fill takes the spool from the report.
+	def _assignToolSpools(self, filamentModel, toolUsage):
+		allSpools = [spool for spool in (toolUsage.get("spools") or []) if spool != None]
+		if (len(allSpools) > 1):
+			allSpoolNames = ""
+			allVendors = ""
+			allMaterials = ""
+			for spool in allSpools:
+				allSpoolNames = self._appendUniqueToCommaList(allSpoolNames, spool.get("spoolName"))
+				allVendors = self._appendUniqueToCommaList(allVendors, spool.get("vendor"))
+				allMaterials = self._appendUniqueToCommaList(allMaterials, spool.get("material"))
+			filamentModel.spoolName = allSpoolNames
+			filamentModel.vendor = allVendors
+			filamentModel.material = allMaterials
+			return
+
+		if (StringUtils.isEmpty(filamentModel.spoolName) and StringUtils.isNotEmpty(toolUsage.get("spoolName"))):
+			filamentModel.spoolName = toolUsage.get("spoolName")
+			filamentModel.vendor = toolUsage.get("vendor")
+			filamentModel.material = toolUsage.get("material")
+			if (filamentModel.diameter == None):
+				filamentModel.diameter = StringUtils.transformToFloatOrNone(toolUsage.get("diameter"))
+			if (filamentModel.density == None):
+				filamentModel.density = StringUtils.transformToFloatOrNone(toolUsage.get("density"))
+
+	# SpoolManagerExtended sends print_job_usage_booked once per job end;
+	# api_getJobFilamentUsage came with it, so its presence tells the two versions apart.
+
+	def _doesPeerReportWholePrintJobs(self):
+		if (self._isSpoolManagerInstalledAndEnabled() == False):
+			return False
+		return hasattr(self._spoolManagerPluginImplementation, "api_getJobFilamentUsage")
+
 	def _storeBackfilledPrintJob(self, databaseId, printJobModel):
 		self._recalculateTotalFilamentModel(printJobModel)
 		self._recalculateCostsInPlace(printJobModel)
@@ -1097,12 +1146,22 @@ class PrintJobHistoryExtendedPlugin(
 	def _recalculateTotalFilamentModel(self, printJobModel):
 		totalFilamentModel = printJobModel.getFilamentModelByToolId("total")
 		if (totalFilamentModel == None):
-			return
+			# A capture that failed half way stored the job without its "total" row - the
+			# only one the table and the dialog show. The usage would be invisible without it.
+			totalFilamentModel = FilamentModel()
+			totalFilamentModel.toolId = "total"
+			printJobModel.addFilamentModel(totalFilamentModel)
 
 		usedTotalLength = None
 		usedTotalWeight = 0.0
 		usedTotalCost = 0.0
+		allSpoolNames = ""
+		allVendors = ""
+		allMaterials = ""
 		for filamentModel in printJobModel.getFilamentModels(withoutTotal=True):
+			allSpoolNames = self._appendUniqueToCommaList(allSpoolNames, filamentModel.spoolName)
+			allVendors = self._appendUniqueToCommaList(allVendors, filamentModel.vendor)
+			allMaterials = self._appendUniqueToCommaList(allMaterials, filamentModel.material)
 			if (filamentModel.usedLength == None):
 				continue
 			if (usedTotalLength == None):
@@ -1115,6 +1174,13 @@ class PrintJobHistoryExtendedPlugin(
 			totalFilamentModel.usedLength = usedTotalLength
 			totalFilamentModel.usedWeight = usedTotalWeight
 			totalFilamentModel.usedCost = usedTotalCost
+
+		# Like the capture: the "total" row lists every spool of the job. A report may have
+		# named another spool (changed during the job) or filled a row the capture left empty.
+		if (allSpoolNames != ""):
+			totalFilamentModel.spoolName = allSpoolNames
+			totalFilamentModel.vendor = allVendors
+			totalFilamentModel.material = allMaterials
 
 
 	# _addCostsToPrintModel() cannot be reused for a backfill: it always builds a NEW
@@ -1229,12 +1295,24 @@ class PrintJobHistoryExtendedPlugin(
 
 	# Measuring electricity needs samples inside the print window, but the Tasmota plugin
 	# polls only every few minutes and ships with polling switched off entirely.
-	def _checkTasmotaPolling(self):
+	def _checkTasmotaSetup(self):
 		if (self._isTasmotaInstalledAndEnabled() == False):
 			return
-		if (self._settings.get_boolean([SettingsKeys.SETTINGS_KEY_NO_NOTIFICATION_TASMOTA_POLLING]) == True):
+		plugIp = self._settings.get([SettingsKeys.SETTINGS_KEY_TASMOTA_PLUG_IP])
+		if (StringUtils.isEmpty(plugIp)):
 			return
-		if (StringUtils.isEmpty(self._settings.get([SettingsKeys.SETTINGS_KEY_TASMOTA_PLUG_IP]))):
+
+		# The plug is stored by its address and does not follow a change in Tasmota's own
+		# list. The settings then show "None" while the old address is still asked for, and
+		# every print ends without electricity cost and without a hint why (K9, 2026-10-03).
+		allPlugIps = [plug["ip"] for plug in self._readTasmotaPlugs()]
+		if ((plugIp in allPlugIps) == False):
+			self._logger.warning("The Tasmota plug '" + str(plugIp) + "' selected for electricity measurement is not configured in the Tasmota plugin (configured: " + str(allPlugIps) + ")")
+			self._sendMessageToClient("notice", "Tasmota plug not found",
+									  "The plug " + str(plugIp) + " selected for measuring electricity is no longer configured in the Tasmota plugin. Select the printer's plug again in the Print Job History Extended settings.")
+			return
+
+		if (self._settings.get_boolean([SettingsKeys.SETTINGS_KEY_NO_NOTIFICATION_TASMOTA_POLLING]) == True):
 			return
 
 		# Note these are the snake_case keys Tasmota's defaults and its polling timer use.
@@ -1293,7 +1371,7 @@ class PrintJobHistoryExtendedPlugin(
 				connection.close()
 
 		if (row is None or row[0] is None or row[1] is None):
-			self._logger.info("No Tasmota energy samples recorded during the print")
+			self._logger.info("No Tasmota energy samples recorded during the print for plug '" + str(plugIp) + ":" + str(plugIdx) + "'")
 			return None
 
 		# A single sample carries no difference, so it says nothing about consumption.
@@ -1440,6 +1518,14 @@ class PrintJobHistoryExtendedPlugin(
 	def _printJobFinished(self, printStatus, payload):
 		self._logger.info("PrintJob finished!")
 
+		# Without a start there is no job to complete: OctoPrint restarted during the print,
+		# or a connector reported the end of the same job a second time.
+		if (self._currentPrintJobModel == None):
+			self._logger.warning("Print job ended with status '" + printStatus + "', but no print job is running. Nothing to capture.")
+			return
+
+		payload = self._completePayloadFromJobStart(payload)
+
 		# Start the capture without a connection left over on this thread (a stale one
 		# fails with "server has gone away" before the retry in insertPrintJob is reached),
 		# and do not leave one behind for the next print either.
@@ -1448,6 +1534,32 @@ class PrintJobHistoryExtendedPlugin(
 			self._capturePrintJobData(printStatus, payload)
 		finally:
 			self._databaseManager.releaseThreadConnection()
+			# The job is over, whatever the capture made of it. Anything still arriving for
+			# it (a repeated end event, the layer reports of a hand-jogged Z axis) must not
+			# land on it, nor be stored as another job.
+			self._currentPrintJobModel = None
+
+
+	# The end event is supposed to name the file, but after a printer error OctoPrint
+	# 2.0.0rc5 fires PrintFailed with the payload of the Disconnected event instead:
+	# {"connector": "serial"}, no origin, path, name or time. The thread that sends it
+	# reads a local variable which the same function reassigns for the Disconnected event
+	# right afterwards. The file is the one recorded at the start either way, so it is
+	# taken from there. A copy, because every other plugin gets the same dict.
+	def _completePayloadFromJobStart(self, payload):
+		completedPayload = dict(payload) if payload != None else {}
+		printJobModel = self._currentPrintJobModel
+		missingKeys = []
+		for key, startValue in [("origin", printJobModel.fileOrigin),
+								("path", printJobModel.filePathName),
+								("name", printJobModel.fileName),
+								("size", printJobModel.fileSize)]:
+			if (completedPayload.get(key) == None):
+				completedPayload[key] = startValue
+				missingKeys.append(key)
+		if (len(missingKeys) > 0):
+			self._logger.warning("The end event carries no " + ", ".join(missingKeys) + " (payload " + str(payload) + "), taking it from the start of the print job")
+		return completedPayload
 
 	def _capturePrintJobData(self, printStatus, payload):
 		captureMode = self._settings.get([SettingsKeys.SETTINGS_KEY_CAPTURE_PRINTJOBHISTORY_MODE])
@@ -1788,16 +1900,19 @@ class PrintJobHistoryExtendedPlugin(
 			self._logger.info("Take Snapshot via M118 command is not activated in plugin settings")
 			return
 
-		if (self._currentPrintJobModel == None or self._currentPrintJobModel.printStartDateTime == None):
+		# Read once: the job ends on the event thread, which resets it to None meanwhile
+		printJobModel = self._currentPrintJobModel
+		if (printJobModel == None or printJobModel.printStartDateTime == None):
 			self._logger.error("M118 command detected, but there is no printjob started!")
 			return
 
-		printStartDateTime = self._currentPrintJobModel.printStartDateTime
+		printStartDateTime = printJobModel.printStartDateTime
 
 		def snapshotTaken(success):
 			# only for the print that asked, should the next one have started meanwhile
-			if (success == True and self._currentPrintJobModel != None
-				and self._currentPrintJobModel.printStartDateTime == printStartDateTime):
+			currentPrintJobModel = self._currentPrintJobModel
+			if (success == True and currentPrintJobModel != None
+				and currentPrintJobModel.printStartDateTime == printStartDateTime):
 				self._m118SnapshotTaken = True
 
 		self._logger.info("M118 command enabled for taking snapshot. Try to capture image!")
@@ -1895,7 +2010,7 @@ class PrintJobHistoryExtendedPlugin(
 				self._sendMessageConfirmToClient(messageConfirmData.title, messageConfirmData.message)
 
 			self._checkForMissingFilamentTracking()
-			self._checkTasmotaPolling()
+			self._checkTasmotaSetup()
 
 		elif Events.PRINT_STARTED == event:
 			self._printJobStarted(payload)
