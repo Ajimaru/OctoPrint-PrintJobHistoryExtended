@@ -316,7 +316,7 @@ class SdCardFileTestCase(unittest.TestCase):
 
 		plugin._createAndAssignFilamentModel(printJob, {"origin": "local", "path": "Rocket.gcode"})
 
-		self.assertEqual(printJob.getFilamentModelByToolId("tool0").calculatedLength, None)
+		self.assertEqual(printJob.getFilamentModelByToolId("tool0"), None)
 		self.assertEqual(printJob.getFilamentModelByToolId("total").calculatedLength, 120.0)
 
 
@@ -359,6 +359,87 @@ class ConnectorPrintJobTestCase(unittest.TestCase):
 		self.assertEqual(sorted(f.toolId for f in printJob.getFilamentModels()), ["tool3", "total"])
 		tool3 = printJob.getFilamentModelByToolId("tool3")
 		self.assertEqual((tool3.calculatedLength, tool3.usedLength, tool3.spoolName), (407.39, 0.0, "White"))
+
+	PETG_ON_T2 = [{"toolIndex": 2, "databaseId": 37, "spoolName": "White", "material": "PETG", "vendor": "OWL-Filament",
+				   "density": 1.27, "diameter": 1.75, "cost": 12.9, "weight": 1000.0}]
+
+	def test_spoolOnAToolTheJobDoesNotUseGetsNoRow(self):
+		# U1 job 189 printed on T3 with the PETG spool still mounted on T2: empty tool2 row, total "PLA, PETG"
+		plugin = createPluginWithSpoolManager(createSpoolManager(jobFilamentUsage={"tool3": {"length": 429.25}},
+																  extrusionAmount=[0.0, 0.0, 0.0, 0.0],
+																  selectedSpools=self.PETG_ON_T2 + self.WHITE_ON_T3))
+		printJob = createStartedPrintJob()
+
+		plugin._createAndAssignFilamentModel(printJob, {"origin": "local", "path": "rocket_PLA_22m54s.gcode"})
+
+		self.assertEqual(sorted(f.toolId for f in printJob.getFilamentModels()), ["tool3", "total"])
+		total = printJob.getFilamentModelByToolId("total")
+		self.assertEqual((total.spoolName, total.material, total.calculatedLength), ("White", "PLA", 429.25))
+
+	def test_everyToolTheJobUsesKeepsItsRow(self):
+		# a two-colour job on T2 and T3, the slicer lists the unused heads with 0
+		plugin = createPluginWithSpoolManager(createSpoolManager(
+			jobFilamentUsage={"tool0": {"length": 0.0}, "tool2": {"length": 120.0}, "tool3": {"length": 80.0}},
+			selectedSpools=self.PETG_ON_T2 + self.WHITE_ON_T3))
+		printJob = createStartedPrintJob()
+
+		plugin._createAndAssignFilamentModel(printJob, {"origin": "local", "path": "two_colours.gcode"})
+
+		self.assertEqual(sorted(f.toolId for f in printJob.getFilamentModels()), ["tool2", "tool3", "total"])
+		self.assertEqual(printJob.getFilamentModelByToolId("total").material, "PETG, PLA")
+
+	def test_allSpoolsCountWithoutACalculation(self):
+		# A1 mini without metadata: nothing tells which spool the job uses
+		plugin = createPluginWithSpoolManager(createSpoolManager(selectedSpools=self.PETG_ON_T2 + self.WHITE_ON_T3))
+		printJob = createStartedPrintJob()
+
+		plugin._createAndAssignFilamentModel(printJob, {"origin": "printer", "path": "rocket.gcode.3mf"})
+
+		self.assertEqual(sorted(f.toolId for f in printJob.getFilamentModels()), ["tool2", "tool3", "total"])
+
+	def test_allSpoolsCountWhenTheCalculationMatchesNoneOfThem(self):
+		# OctoPrint's own analysis files a U1 job under tool0, the spool sits on T3
+		plugin = createPluginWithSpoolManager(createSpoolManager(extrusionAmount=[0.0, 0.0, 0.0, 0.0],
+																  selectedSpools=self.WHITE_ON_T3),
+											  metadata={"analysis": {"filament": {"tool0": {"length": 407.39}}}})
+		plugin._spoolManagerPluginImplementation.api_getJobFilamentUsage = None
+		del plugin._spoolManagerPluginImplementation.api_getJobFilamentUsage
+		printJob = createStartedPrintJob()
+
+		plugin._createAndAssignFilamentModel(printJob, {"origin": "printer", "path": "total_test_1_V2_U1.gcode"})
+
+		self.assertEqual(sorted(f.toolId for f in printJob.getFilamentModels()), ["tool0", "tool3", "total"])
+		self.assertEqual(printJob.getFilamentModelByToolId("tool3").spoolName, "White")
+
+	def test_extrusionOutsideTheCalculatedToolsKeepsItsSpool(self):
+		# a streamed job on T3, filament pushed through T2 by hand during a pause
+		plugin = createPluginWithSpoolManager(createSpoolManager(jobFilamentUsage={"tool3": {"length": 429.25}},
+																  extrusionAmount=[0.0, 0.0, 25.0, 410.0],
+																  selectedSpools=self.PETG_ON_T2 + self.WHITE_ON_T3))
+		printJob = createStartedPrintJob()
+
+		plugin._createAndAssignFilamentModel(printJob, {"origin": "local", "path": "rocket_PLA_22m54s.gcode"})
+
+		self.assertEqual(sorted(f.toolId for f in printJob.getFilamentModels()), ["tool2", "tool3", "total"])
+		tool2 = printJob.getFilamentModelByToolId("tool2")
+		self.assertEqual((tool2.spoolName, tool2.material, tool2.usedLength), ("White", "PETG", 25.0))
+		self.assertGreater(tool2.usedWeight, 0.0)
+		total = printJob.getFilamentModelByToolId("total")
+		self.assertEqual((total.material, total.usedLength, total.calculatedLength), ("PLA, PETG", 435.0, 429.25))
+
+	def test_reportedToolWithoutUsageGetsNoRow(self):
+		spoolManager = createSpoolManager(jobFilamentUsage={"tool3": {"length": 429.25}}, selectedSpools=self.WHITE_ON_T3)
+		spoolManager.api_getLastPrintJobUsage.return_value = {
+			"apiVersion": 1, "capturedAt": (PRINT_START + datetime.timedelta(minutes=10)).isoformat(), "source": "moonraker",
+			"tools": [None, None, {"toolIndex": 2, "usedLength": 0.0, "usedWeight": 0.0, "usedCost": 0.0},
+					  {"toolIndex": 3, "usedLength": 179.6, "usedWeight": 0.54, "usedCost": 0.005}]}
+		plugin = createPluginWithSpoolManager(spoolManager)
+		printJob = createStartedPrintJob()
+
+		plugin._createAndAssignFilamentModel(printJob, {"origin": "local", "path": "rocket_PLA_22m54s.gcode"})
+
+		self.assertEqual(sorted(f.toolId for f in printJob.getFilamentModels()), ["tool3", "total"])
+		self.assertEqual(printJob.getFilamentModelByToolId("total").usedLength, 179.6)
 
 	def test_odometerToolThatExtrudedKeepsItsRow(self):
 		# an unsliced file printed without a spool selected: the measured length is all there is
