@@ -420,8 +420,8 @@ class PrintJobHistoryExtendedPlugin(
 	def _createAndAssignFilamentModel(self, printJob, payload):
 
 		self._logger.info("----- Start reading filament -----")
-		filePath = payload["path"]
-		fileData = self._readFileMetaData(payload["origin"], filePath)
+		filePath = payload.get("path")
+		fileData = self._readFileMetaData(payload.get("origin"), filePath)
 
 		# - grab calcualted data for each tool
 		# - grap measured data for each tool
@@ -475,11 +475,15 @@ class PrintJobHistoryExtendedPlugin(
 
 			# - assign calculated values
 			if (filamentCalculatedDict != None and toolId in filamentCalculatedDict):
-				calculatedLength = filamentCalculatedDict[toolId]["length"]
+				toolAnalysis = filamentCalculatedDict[toolId]
+				calculatedLength = None
+				if (isinstance(toolAnalysis, dict)):
+					calculatedLength = StringUtils.transformToFloatOrNone(toolAnalysis.get("length"))
 				# not needed calculatedVolumne = filamentCalculatedDict[toolId]["volume"]
 
-				filamentModel.calculatedLength = calculatedLength
-				calculatedTotalLength = calculatedTotalLength + calculatedLength
+				if (calculatedLength != None):
+					filamentModel.calculatedLength = calculatedLength
+					calculatedTotalLength = calculatedTotalLength + calculatedLength
 
 			# Assign SpoolData (e.g. Name), no longer gated on calculatedLength > 0: a
 			# printer-hosted print has no calculated length at all, and an unknown length is
@@ -678,10 +682,11 @@ class PrintJobHistoryExtendedPlugin(
 	def _readCalculatedFilamentMetaData(self, fileData):
 		filamentAnalyseDict = None
 		# No meta data at all (printer-hosted file) is not the same as meta data without a
-		# filament analysis - both end up without a calculated length, though.
-		if (fileData != None and "analysis" in fileData):
-			if "filament" in fileData["analysis"]:
-				filamentAnalyseDict = fileData["analysis"]["filament"]
+		# filament analysis - both end up without a calculated length, though. A file on a
+		# Marlin printer's SD card carries the key with None as its value (K9, 2026-10-03).
+		analysis = fileData.get("analysis") if isinstance(fileData, dict) else None
+		if (isinstance(analysis, dict) and isinstance(analysis.get("filament"), dict)):
+			filamentAnalyseDict = analysis["filament"]
 		if (filamentAnalyseDict == None):
 			self._logger.info("There is no calculated filament data in meta-file")
 		return filamentAnalyseDict
@@ -746,6 +751,10 @@ class PrintJobHistoryExtendedPlugin(
 
 
 	def _updatePrintJobModelWithLayerHeightInfos(self, dlpPayload):
+		# DisplayLayerProgress reports the height while no print is running as well, e.g. when
+		# the Z axis is jogged by hand. There is no job to attribute it to then.
+		if (self._currentPrintJobModel == None):
+			return
 		totalLayers = dlpPayload["totalLayer"]
 		currentLayer = dlpPayload["currentLayer"]
 		self._currentPrintJobModel.printedLayers = currentLayer + " / " + totalLayers
@@ -760,7 +769,7 @@ class PrintJobHistoryExtendedPlugin(
 		self._currentPrintJobModel.printStartDateTime = datetime.datetime.now()
 		# Per instance, because the attribute is declared on the class - a leftover from the
 		# previous job would otherwise be attributed to this one.
-		self._currentPrintJobModel.highestTemperatures = None
+		self._currentPrintJobModel.printTemperatures = None
 
 		self._currentPrintJobModel.fileOrigin = payload["origin"]
 		self._currentPrintJobModel.fileName = payload["name"]
@@ -787,28 +796,30 @@ class PrintJobHistoryExtendedPlugin(
 	# Reading the temperature once, a fixed delay after the start, is a guess about how long
 	# the printer needs. A Bambu calibrates first and ramps its target up in steps, so after
 	# 60 seconds the nozzle target was still 140 instead of the 220 it printed with.
-	# Tracking the highest target seen during the print needs no such guess and works the
-	# same on Marlin, Klipper and connector printers.
+	# The highest target of the print is no better: the A1 mini purges its nozzle at 250
+	# before printing PLA at 220, and the job was stored with 250. So every sample counts
+	# the target it saw, and the target held for most of the print is the print temperature
+	# (see _resolvePrintTemperatures). Works the same on Marlin, Klipper and connector printers.
 	#
 	# Every tool the printer reports is tracked, not just one: which tools the job actually
 	# used is only known at the end (see _resolveTemperatureToolIds).
-	def _trackHighestTemperatureAsync(self, printer, printJobModel, delayInSeconds, intervalInSeconds):
+	def _trackPrintTemperaturesAsync(self, printer, printJobModel, delayInSeconds, intervalInSeconds):
 		time.sleep(delayInSeconds)
 
-		highestTemperatures = {}
+		samplesBySensor = {}
 		while (self._currentPrintJobModel is printJobModel):
 			try:
 				currentTemps = printer.get_current_temperatures()
 				if (currentTemps != None):
-					self._collectHighestTemperatures(highestTemperatures, currentTemps)
+					self._collectTemperatureSample(samplesBySensor, currentTemps)
 			except Exception as e:
 				self._logger.warning("Could not read the current temperature: " + str(e))
 
 			# Publish after every sample, not just at the end: PRINT_DONE can arrive while
 			# this thread sleeps, and a job stored in that window would get no temperature.
-			# A copy, so the capture never sees a dict this thread is still changing.
-			if (len(highestTemperatures) > 0):
-				printJobModel.highestTemperatures = dict(highestTemperatures)
+			# A fresh dict, so the capture never sees one this thread is still changing.
+			if (len(samplesBySensor) > 0):
+				printJobModel.printTemperatures = self._resolvePrintTemperatures(samplesBySensor)
 
 			if (printer.is_printing() == False and printer.is_paused() == False):
 				break
@@ -817,43 +828,58 @@ class PrintJobHistoryExtendedPlugin(
 		# Park the result on the model instead of writing it: temperatures are only persisted
 		# by insertPrintJob, and this thread can still be running when the job is stored.
 		# _capturePrintJobData picks it up at the one moment where it is guaranteed to count.
-		self._logger.info("Highest temperatures during the print: " + str(highestTemperatures))
-		printJobModel.highestTemperatures = dict(highestTemperatures)
+		printTemperatures = self._resolvePrintTemperatures(samplesBySensor)
+		self._logger.info("Print temperatures (the target held longest): " + str(printTemperatures))
+		printJobModel.printTemperatures = printTemperatures
 
 
-	def _collectHighestTemperatures(self, highestTemperatures, currentTemps):
+	# samplesBySensor: {"tool0": {"count": 12, "targets": {220.0: (10, 12), 250.0: (2, 2)},
+	# "highestActual": 221.4}, ...} - per target how many samples saw it, and the number of
+	# the last sample that did.
+	def _collectTemperatureSample(self, samplesBySensor, currentTemps):
 		for sensorName in currentTemps:
 			# The Moonraker connector files every Klipper heater it has no name for under None,
 			# bed included, and logged a warning every 15 s - enough to overflow the technical log.
 			if (isinstance(sensorName, str) == False):
 				continue
-			if (sensorName == "bed" or sensorName.startswith("tool")):
-				highest = self._higherTemperature(highestTemperatures.get(sensorName), currentTemps, sensorName)
-				if (highest != None):
-					highestTemperatures[sensorName] = highest
+			if ((sensorName == "bed" or sensorName.startswith("tool")) == False):
+				continue
+
+			samples = samplesBySensor.setdefault(sensorName, {"count": 0, "targets": {}, "highestActual": None})
+			samples["count"] = samples["count"] + 1
+			# The target is what the job asked for; actual only reaches it, and overshoots.
+			# A target of 0 is a heater that is off - a parked head, the cool-down after the
+			# last layer - and says nothing about the print temperature.
+			target = currentTemps[sensorName].get("target")
+			if (target != None and target != 0):
+				seenCount = samples["targets"].get(target, (0, 0))[0]
+				samples["targets"][target] = (seenCount + 1, samples["count"])
+				continue
+			actual = currentTemps[sensorName].get("actual")
+			if (actual != None and (samples["highestActual"] == None or actual > samples["highestActual"])):
+				samples["highestActual"] = actual
 
 
-	# The target is what the job asked for; actual only reaches it, and overshoots. Fall back
-	# to actual when a printer reports no target at all.
-	def _higherTemperature(self, currentHighest, currentTemps, sensorName):
-		if (sensorName not in currentTemps):
-			return currentHighest
-		temperature = currentTemps[sensorName].get("target")
-		if (temperature == None or temperature == 0):
-			temperature = currentTemps[sensorName].get("actual")
-		if (temperature == None):
-			return currentHighest
-		if (currentHighest == None or temperature > currentHighest):
-			return temperature
-		return currentHighest
+	# The target seen in the most samples; on a tie the later one, because a purge or a
+	# calibration step comes before the print, not after it. Actual only for a sensor that
+	# never reported a target at all, and then the highest one, as before.
+	def _resolvePrintTemperatures(self, samplesBySensor):
+		printTemperatures = {}
+		for sensorName, samples in samplesBySensor.items():
+			targets = samples["targets"]
+			if (len(targets) > 0):
+				printTemperatures[sensorName] = max(targets, key=lambda target: targets[target])
+			elif (samples["highestActual"] != None):
+				printTemperatures[sensorName] = samples["highestActual"]
+		return printTemperatures
 
 
 	def _readAndAssignCurrentTemperatureDelayed(self, printJobModel):
 		# The delay setting keeps its meaning: nothing is sampled before it has passed, so a
 		# printer that reports garbage right after the start is still skipped.
 		delayInSeconds = self._settings.get_int([SettingsKeys.SETTINGS_KEY_DELAY_READING_TEMPERATURE_FROM_PRINTER])
-		thread = threading.Thread(name='TrackHighestTemperature',
-								  target=self._trackHighestTemperatureAsync,
+		thread = threading.Thread(name='TrackPrintTemperatures',
+								  target=self._trackPrintTemperaturesAsync,
 								  args=(self._printer, printJobModel, delayInSeconds, 15,))
 		thread.daemon = True
 		thread.start()
@@ -880,18 +906,18 @@ class PrintJobHistoryExtendedPlugin(
 	# is the nozzle temperature of the job. "-" when the printer reported none of them -
 	# some connectors only report their first extruder, and an honest "unknown" beats
 	# another head's value.
-	def _addTemperaturesToPrintModel(self, printJobModel, highestTemperatures, toolIds):
+	def _addTemperaturesToPrintModel(self, printJobModel, printTemperatures, toolIds):
 		nozzleToolId = toolIds[0]
 		nozzleTemperature = None
 		for toolId in toolIds:
-			temperature = highestTemperatures.get(toolId)
+			temperature = printTemperatures.get(toolId)
 			if (temperature != None and (nozzleTemperature == None or temperature > nozzleTemperature)):
 				nozzleToolId = toolId
 				nozzleTemperature = temperature
 		if (nozzleTemperature == None):
 			self._logger.info("The printer reported no temperature for " + str(toolIds) + " during this print")
 
-		bedTemperature = highestTemperatures.get("bed")
+		bedTemperature = printTemperatures.get("bed")
 		for (sensorName, temperature) in [("bed", bedTemperature), (nozzleToolId, nozzleTemperature)]:
 			tempModel = TemperatureModel()
 			tempModel.sensorName = sensorName
@@ -904,6 +930,15 @@ class PrintJobHistoryExtendedPlugin(
 	# extrusion the odometer never sees. This event carries the booked numbers.
 	def _onSpoolUsageBookedByPeer(self, payload):
 		if (payload == None):
+			return
+
+		# A SpoolManagerExtended that reports the whole job (print_job_usage_booked, shipped
+		# together with api_getJobFilamentUsage) makes this event redundant, and wrong for a
+		# job that was paused: it only carries what was booked since the last pause, while
+		# the report adds up the whole job. Applied after the report it would replace the
+		# job's total with that last part.
+		if (self._doesPeerReportWholePrintJobs() == True):
+			self._logger.info("Ignoring spool usage event for tool '" + str(payload.get("toolId")) + "' (status '" + str(payload.get("printStatus")) + "'), SpoolManagerExtended reports the whole print job separately")
 			return
 
 		# The same event is fired for a spool change in the MIDDLE of a print (the
@@ -1028,6 +1063,7 @@ class PrintJobHistoryExtendedPlugin(
 		for toolUsage in allToolUsages:
 			toolId = "tool" + str(toolUsage.get("toolIndex"))
 			filamentModel = self._assignToolUsage(printJobModel, toolId, toolUsage)
+			self._assignToolSpools(filamentModel, toolUsage)
 			self._logger.info("Backfilled " + toolId + " of print job '" + str(databaseId) + "' from the job report: usedLength='" + str(filamentModel.usedLength) + "'; usedWeight='" + str(filamentModel.usedWeight) + "'; usedCost='" + str(filamentModel.usedCost) + "' (source '" + str(toolUsage.get("source", payload.get("source"))) + "')")
 
 		self._storeBackfilledPrintJob(databaseId, printJobModel)
@@ -1077,6 +1113,41 @@ class PrintJobHistoryExtendedPlugin(
 		return filamentModel
 
 
+	# The spool(s) the report booked the tool's usage on. Several when the spool was changed
+	# during the job: the row then names all of them, in the order they were used. A row the
+	# capture could not fill takes the spool from the report.
+	def _assignToolSpools(self, filamentModel, toolUsage):
+		allSpools = [spool for spool in (toolUsage.get("spools") or []) if spool != None]
+		if (len(allSpools) > 1):
+			allSpoolNames = ""
+			allVendors = ""
+			allMaterials = ""
+			for spool in allSpools:
+				allSpoolNames = self._appendUniqueToCommaList(allSpoolNames, spool.get("spoolName"))
+				allVendors = self._appendUniqueToCommaList(allVendors, spool.get("vendor"))
+				allMaterials = self._appendUniqueToCommaList(allMaterials, spool.get("material"))
+			filamentModel.spoolName = allSpoolNames
+			filamentModel.vendor = allVendors
+			filamentModel.material = allMaterials
+			return
+
+		if (StringUtils.isEmpty(filamentModel.spoolName) and StringUtils.isNotEmpty(toolUsage.get("spoolName"))):
+			filamentModel.spoolName = toolUsage.get("spoolName")
+			filamentModel.vendor = toolUsage.get("vendor")
+			filamentModel.material = toolUsage.get("material")
+			if (filamentModel.diameter == None):
+				filamentModel.diameter = StringUtils.transformToFloatOrNone(toolUsage.get("diameter"))
+			if (filamentModel.density == None):
+				filamentModel.density = StringUtils.transformToFloatOrNone(toolUsage.get("density"))
+
+	# SpoolManagerExtended sends print_job_usage_booked once per job end;
+	# api_getJobFilamentUsage came with it, so its presence tells the two versions apart.
+
+	def _doesPeerReportWholePrintJobs(self):
+		if (self._isSpoolManagerInstalledAndEnabled() == False):
+			return False
+		return hasattr(self._spoolManagerPluginImplementation, "api_getJobFilamentUsage")
+
 	def _storeBackfilledPrintJob(self, databaseId, printJobModel):
 		self._recalculateTotalFilamentModel(printJobModel)
 		self._recalculateCostsInPlace(printJobModel)
@@ -1097,12 +1168,22 @@ class PrintJobHistoryExtendedPlugin(
 	def _recalculateTotalFilamentModel(self, printJobModel):
 		totalFilamentModel = printJobModel.getFilamentModelByToolId("total")
 		if (totalFilamentModel == None):
-			return
+			# A capture that failed half way stored the job without its "total" row - the
+			# only one the table and the dialog show. The usage would be invisible without it.
+			totalFilamentModel = FilamentModel()
+			totalFilamentModel.toolId = "total"
+			printJobModel.addFilamentModel(totalFilamentModel)
 
 		usedTotalLength = None
 		usedTotalWeight = 0.0
 		usedTotalCost = 0.0
+		allSpoolNames = ""
+		allVendors = ""
+		allMaterials = ""
 		for filamentModel in printJobModel.getFilamentModels(withoutTotal=True):
+			allSpoolNames = self._appendUniqueToCommaList(allSpoolNames, filamentModel.spoolName)
+			allVendors = self._appendUniqueToCommaList(allVendors, filamentModel.vendor)
+			allMaterials = self._appendUniqueToCommaList(allMaterials, filamentModel.material)
 			if (filamentModel.usedLength == None):
 				continue
 			if (usedTotalLength == None):
@@ -1115,6 +1196,13 @@ class PrintJobHistoryExtendedPlugin(
 			totalFilamentModel.usedLength = usedTotalLength
 			totalFilamentModel.usedWeight = usedTotalWeight
 			totalFilamentModel.usedCost = usedTotalCost
+
+		# Like the capture: the "total" row lists every spool of the job. A report may have
+		# named another spool (changed during the job) or filled a row the capture left empty.
+		if (allSpoolNames != ""):
+			totalFilamentModel.spoolName = allSpoolNames
+			totalFilamentModel.vendor = allVendors
+			totalFilamentModel.material = allMaterials
 
 
 	# _addCostsToPrintModel() cannot be reused for a backfill: it always builds a NEW
@@ -1229,12 +1317,24 @@ class PrintJobHistoryExtendedPlugin(
 
 	# Measuring electricity needs samples inside the print window, but the Tasmota plugin
 	# polls only every few minutes and ships with polling switched off entirely.
-	def _checkTasmotaPolling(self):
+	def _checkTasmotaSetup(self):
 		if (self._isTasmotaInstalledAndEnabled() == False):
 			return
-		if (self._settings.get_boolean([SettingsKeys.SETTINGS_KEY_NO_NOTIFICATION_TASMOTA_POLLING]) == True):
+		plugIp = self._settings.get([SettingsKeys.SETTINGS_KEY_TASMOTA_PLUG_IP])
+		if (StringUtils.isEmpty(plugIp)):
 			return
-		if (StringUtils.isEmpty(self._settings.get([SettingsKeys.SETTINGS_KEY_TASMOTA_PLUG_IP]))):
+
+		# The plug is stored by its address and does not follow a change in Tasmota's own
+		# list. The settings then show "None" while the old address is still asked for, and
+		# every print ends without electricity cost and without a hint why (K9, 2026-10-03).
+		allPlugIps = [plug["ip"] for plug in self._readTasmotaPlugs()]
+		if ((plugIp in allPlugIps) == False):
+			self._logger.warning("The Tasmota plug '" + str(plugIp) + "' selected for electricity measurement is not configured in the Tasmota plugin (configured: " + str(allPlugIps) + ")")
+			self._sendMessageToClient("notice", "Tasmota plug not found",
+									  "The plug " + str(plugIp) + " selected for measuring electricity is no longer configured in the Tasmota plugin. Select the printer's plug again in the Print Job History Extended settings.")
+			return
+
+		if (self._settings.get_boolean([SettingsKeys.SETTINGS_KEY_NO_NOTIFICATION_TASMOTA_POLLING]) == True):
 			return
 
 		# Note these are the snake_case keys Tasmota's defaults and its polling timer use.
@@ -1293,7 +1393,7 @@ class PrintJobHistoryExtendedPlugin(
 				connection.close()
 
 		if (row is None or row[0] is None or row[1] is None):
-			self._logger.info("No Tasmota energy samples recorded during the print")
+			self._logger.info("No Tasmota energy samples recorded during the print for plug '" + str(plugIp) + ":" + str(plugIdx) + "'")
 			return None
 
 		# A single sample carries no difference, so it says nothing about consumption.
@@ -1440,6 +1540,14 @@ class PrintJobHistoryExtendedPlugin(
 	def _printJobFinished(self, printStatus, payload):
 		self._logger.info("PrintJob finished!")
 
+		# Without a start there is no job to complete: OctoPrint restarted during the print,
+		# or a connector reported the end of the same job a second time.
+		if (self._currentPrintJobModel == None):
+			self._logger.warning("Print job ended with status '" + printStatus + "', but no print job is running. Nothing to capture.")
+			return
+
+		payload = self._completePayloadFromJobStart(payload)
+
 		# Start the capture without a connection left over on this thread (a stale one
 		# fails with "server has gone away" before the retry in insertPrintJob is reached),
 		# and do not leave one behind for the next print either.
@@ -1448,6 +1556,32 @@ class PrintJobHistoryExtendedPlugin(
 			self._capturePrintJobData(printStatus, payload)
 		finally:
 			self._databaseManager.releaseThreadConnection()
+			# The job is over, whatever the capture made of it. Anything still arriving for
+			# it (a repeated end event, the layer reports of a hand-jogged Z axis) must not
+			# land on it, nor be stored as another job.
+			self._currentPrintJobModel = None
+
+
+	# The end event is supposed to name the file, but after a printer error OctoPrint
+	# 2.0.0rc5 fires PrintFailed with the payload of the Disconnected event instead:
+	# {"connector": "serial"}, no origin, path, name or time. The thread that sends it
+	# reads a local variable which the same function reassigns for the Disconnected event
+	# right afterwards. The file is the one recorded at the start either way, so it is
+	# taken from there. A copy, because every other plugin gets the same dict.
+	def _completePayloadFromJobStart(self, payload):
+		completedPayload = dict(payload) if payload != None else {}
+		printJobModel = self._currentPrintJobModel
+		missingKeys = []
+		for key, startValue in [("origin", printJobModel.fileOrigin),
+								("path", printJobModel.filePathName),
+								("name", printJobModel.fileName),
+								("size", printJobModel.fileSize)]:
+			if (completedPayload.get(key) == None):
+				completedPayload[key] = startValue
+				missingKeys.append(key)
+		if (len(missingKeys) > 0):
+			self._logger.warning("The end event carries no " + ", ".join(missingKeys) + " (payload " + str(payload) + "), taking it from the start of the print job")
+		return completedPayload
 
 	def _capturePrintJobData(self, printStatus, payload):
 		captureMode = self._settings.get([SettingsKeys.SETTINGS_KEY_CAPTURE_PRINTJOBHISTORY_MODE])
@@ -1525,13 +1659,13 @@ class PrintJobHistoryExtendedPlugin(
 			except Exception as e:
 				self._logger.exception("Could not read filament informations, storing the print job without them: " + str(e))
 
-			# - Temperatures, highest seen while printing (see _trackHighestTemperatureAsync)
+			# - Temperatures, the targets held while printing (see _trackPrintTemperaturesAsync)
 			# After the filament: which tools the job used comes from there.
 			try:
-				highestTemperatures = self._currentPrintJobModel.highestTemperatures
-				if (highestTemperatures != None):
+				printTemperatures = self._currentPrintJobModel.printTemperatures
+				if (printTemperatures != None):
 					toolIds = self._resolveTemperatureToolIds(self._currentPrintJobModel)
-					self._addTemperaturesToPrintModel(self._currentPrintJobModel, highestTemperatures, toolIds)
+					self._addTemperaturesToPrintModel(self._currentPrintJobModel, printTemperatures, toolIds)
 				else:
 					self._logger.warning("No temperature was tracked during this print, storing none")
 			except Exception as e:
@@ -1788,16 +1922,19 @@ class PrintJobHistoryExtendedPlugin(
 			self._logger.info("Take Snapshot via M118 command is not activated in plugin settings")
 			return
 
-		if (self._currentPrintJobModel == None or self._currentPrintJobModel.printStartDateTime == None):
+		# Read once: the job ends on the event thread, which resets it to None meanwhile
+		printJobModel = self._currentPrintJobModel
+		if (printJobModel == None or printJobModel.printStartDateTime == None):
 			self._logger.error("M118 command detected, but there is no printjob started!")
 			return
 
-		printStartDateTime = self._currentPrintJobModel.printStartDateTime
+		printStartDateTime = printJobModel.printStartDateTime
 
 		def snapshotTaken(success):
 			# only for the print that asked, should the next one have started meanwhile
-			if (success == True and self._currentPrintJobModel != None
-				and self._currentPrintJobModel.printStartDateTime == printStartDateTime):
+			currentPrintJobModel = self._currentPrintJobModel
+			if (success == True and currentPrintJobModel != None
+				and currentPrintJobModel.printStartDateTime == printStartDateTime):
 				self._m118SnapshotTaken = True
 
 		self._logger.info("M118 command enabled for taking snapshot. Try to capture image!")
@@ -1895,7 +2032,7 @@ class PrintJobHistoryExtendedPlugin(
 				self._sendMessageConfirmToClient(messageConfirmData.title, messageConfirmData.message)
 
 			self._checkForMissingFilamentTracking()
-			self._checkTasmotaPolling()
+			self._checkTasmotaSetup()
 
 		elif Events.PRINT_STARTED == event:
 			self._printJobStarted(payload)

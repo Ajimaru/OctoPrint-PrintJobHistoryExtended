@@ -185,6 +185,88 @@ class PrintJobUsageReportTestCase(DatabaseTestCase):
 		self.assertEqual(stored.getFilamentModelByToolId("tool3").usedLength, 5737.0)
 		self.assertEqual(stored.getFilamentModelByToolId("total").usedLength, 5737.0)
 
+	def test_reportFillsAJobStoredWithoutFilament(self):
+		plugin = createPlugin()
+		printJob = PrintJobModel()
+		printJob.fileOrigin = "local"
+		printJob.fileName = "Rocket.gcode"
+		printJob.filePathName = "Rocket.gcode"
+		printJob.printStartDateTime = PRINT_START
+		printJob.save()
+		self.waitFor(plugin, printJob)
+
+		toolUsage = {"toolIndex": 0, "databaseId": 31, "spoolName": "Orange", "vendor": "Kingroon",
+					 "material": "PLA", "diameter": 1.75, "density": 1.23, "usedLength": 653.24,
+					 "usedWeight": 1.93, "usedCost": 0.0155, "source": "odometer"}
+		job = {"origin": "local", "path": "Rocket.gcode", "name": "Rocket.gcode",
+			   "printStartDateTime": PRINT_START.isoformat()}
+		plugin._onPrintJobUsageBookedByPeer(usageReport([toolUsage], job=job, printStatus="failed"))
+
+		stored = PrintJobModel.get_by_id(printJob.get_id())
+		tool0 = stored.getFilamentModelByToolId("tool0")
+		self.assertEqual((tool0.usedLength, tool0.spoolName, tool0.vendor, tool0.density), (653.24, "Orange", "Kingroon", 1.23))
+		total = stored.getFilamentModelByToolId("total")
+		self.assertEqual((total.usedLength, total.usedWeight, total.spoolName, total.material), (653.24, 1.93, "Orange", "PLA"))
+
+	def test_spoolChangedDuringTheJobNamesAllSpools(self):
+		plugin = createPlugin()
+		printJob = self.createStoredPrintJob()
+		self.waitFor(plugin, printJob)
+
+		toolUsage = dict(TOOL3_USAGE, spoolName="Black", vendor="Sunlu", material="PETG", spools=[
+			{"databaseId": 31, "spoolName": "Orange", "vendor": "Kingroon", "material": "PLA", "usedLength": 2000.0},
+			{"databaseId": 32, "spoolName": "Black", "vendor": "Sunlu", "material": "PETG", "usedLength": 3737.0}])
+		plugin._onPrintJobUsageBookedByPeer(usageReport([None, None, None, toolUsage]))
+
+		stored = PrintJobModel.get_by_id(printJob.get_id())
+		tool3 = stored.getFilamentModelByToolId("tool3")
+		self.assertEqual((tool3.usedLength, tool3.spoolName, tool3.vendor), (5737.0, "Orange, Black", "Kingroon, Sunlu"))
+		self.assertEqual(stored.getFilamentModelByToolId("total").material, "PLA, PETG")
+
+	def test_singleSpoolKeepsTheCapturedSpool(self):
+		plugin = createPlugin()
+		printJob = self.createStoredPrintJob()
+		tool3 = printJob.getFilamentModelByToolId("tool3")
+		tool3.spoolName = "Captured"
+		tool3.save()
+		self.waitFor(plugin, printJob)
+
+		toolUsage = dict(TOOL3_USAGE, spoolName="Reported", spools=[
+			{"databaseId": 31, "spoolName": "Reported", "usedLength": 5737.0}])
+		plugin._onPrintJobUsageBookedByPeer(usageReport([None, None, None, toolUsage]))
+
+		stored = PrintJobModel.get_by_id(printJob.get_id())
+		self.assertEqual(stored.getFilamentModelByToolId("tool3").spoolName, "Captured")
+
+	def test_perToolEventIsIgnoredWhenThePeerReportsWholeJobs(self):
+		# After a pause the per-tool event only carries the part since the pause; the
+		# report that follows carries the whole job and must not be replaced by it
+		spoolManager = mock.Mock(spec=["api_getJobFilamentUsage", "api_getLastPrintJobUsage"])
+		plugin = createPlugin(spoolManager)
+		printJob = self.createStoredPrintJob()
+		self.waitFor(plugin, printJob)
+
+		perToolEvent = {"toolId": 3, "usedLength": 1200.0, "usedWeight": 3.0, "usedCost": 0.05,
+						"source": "odometer", "printStatus": "success"}
+		plugin._onPrintJobUsageBookedByPeer(usageReport([None, None, None, TOOL3_USAGE]))
+		plugin._onSpoolUsageBookedByPeer(perToolEvent)
+
+		stored = PrintJobModel.get_by_id(printJob.get_id())
+		self.assertEqual(stored.getFilamentModelByToolId("tool3").usedLength, 5737.0)
+		self.assertEqual(len(plugin._databaseManager.updatedPrintJobs), 1)
+
+	def test_perToolEventStillFillsTheJobForAnOlderPeer(self):
+		spoolManager = mock.Mock(spec=["api_getLastPrintJobUsage"])
+		plugin = createPlugin(spoolManager)
+		printJob = self.createStoredPrintJob()
+		self.waitFor(plugin, printJob)
+
+		plugin._onSpoolUsageBookedByPeer({"toolId": 3, "usedLength": 5737.0, "usedWeight": 14.5,
+										  "usedCost": 0.21, "source": "odometer", "printStatus": "success"})
+
+		stored = PrintJobModel.get_by_id(printJob.get_id())
+		self.assertEqual(stored.getFilamentModelByToolId("tool3").usedLength, 5737.0)
+
 
 class JobFilamentUsageTestCase(unittest.TestCase):
 
@@ -235,23 +317,59 @@ class TemperatureTestCase(unittest.TestCase):
 	def storedTemperatures(self, printJob):
 		return [(t.sensorName, t.sensorValue) for t in printJob.getTemperatureModels()]
 
+	def printTemperatures(self, plugin, *samples):
+		samplesBySensor = {}
+		for currentTemps in samples:
+			plugin._collectTemperatureSample(samplesBySensor, currentTemps)
+		return plugin._resolvePrintTemperatures(samplesBySensor)
+
 	def test_collectsEveryReportedTool(self):
 		plugin = createPlugin()
-		highest = {}
-		plugin._collectHighestTemperatures(highest, {"bed": {"target": 90.0}, "tool0": {"target": 0, "actual": 54.0},
-													 "chamber": {"target": 40.0}})
-		plugin._collectHighestTemperatures(highest, {"bed": {"target": 60.0}, "tool0": {"target": 0, "actual": 49.0},
-													 "tool1": {"target": 250.0}})
-		self.assertEqual(highest, {"bed": 90.0, "tool0": 54.0, "tool1": 250.0})
+		result = self.printTemperatures(plugin,
+										{"bed": {"target": 60.0}, "tool0": {"target": 0, "actual": 54.0},
+										 "chamber": {"target": 40.0}},
+										{"bed": {"target": 60.0}, "tool0": {"target": 0, "actual": 49.0},
+										 "tool1": {"target": 250.0}})
+		self.assertEqual(result, {"bed": 60.0, "tool0": 54.0, "tool1": 250.0})
 
 	def test_heaterTheConnectorHasNoNameForIsSkipped(self):
 		# the Moonraker connector reports "heater_generic panda_breath" under None; it used to
 		# fail the whole sample, bed and nozzle included
 		plugin = createPlugin()
-		highest = {}
-		plugin._collectHighestTemperatures(highest, {"bed": {"target": 60.0}, None: {"target": 45.0},
-													 "tool0": {"target": 0, "actual": 32.0}})
-		self.assertEqual(highest, {"bed": 60.0, "tool0": 32.0})
+		result = self.printTemperatures(plugin, {"bed": {"target": 60.0}, None: {"target": 45.0},
+												 "tool0": {"target": 0, "actual": 32.0}})
+		self.assertEqual(result, {"bed": 60.0, "tool0": 32.0})
+
+	def test_purgeBeforeThePrintIsNotThePrintTemperature(self):
+		# A1 mini, 2026-10-06: calibration at 140, filament purge at 250, PLA printed at 220,
+		# cool-down with the heaters off. It was stored as 250.
+		plugin = createPlugin()
+		samples = ([{"bed": {"target": 65.0}, "tool0": {"target": 140.0}}] * 3 +
+				   [{"bed": {"target": 65.0}, "tool0": {"target": 250.0}}] * 4 +
+				   [{"bed": {"target": 65.0}, "tool0": {"target": 220.0}}] * 40 +
+				   [{"bed": {"target": 0, "actual": 60.0}, "tool0": {"target": 0, "actual": 180.0}}] * 2)
+		self.assertEqual(self.printTemperatures(plugin, *samples), {"bed": 65.0, "tool0": 220.0})
+
+	def test_firstLayerTemperatureDoesNotWin(self):
+		plugin = createPlugin()
+		samples = ([{"tool0": {"target": 220.0}}] * 8 + [{"tool0": {"target": 215.0}}] * 60)
+		self.assertEqual(self.printTemperatures(plugin, *samples), {"tool0": 215.0})
+
+	def test_onATieTheLaterTargetWins(self):
+		# a print stopped right after the purge: one sample each
+		plugin = createPlugin()
+		result = self.printTemperatures(plugin, {"tool0": {"target": 250.0}}, {"tool0": {"target": 220.0}})
+		self.assertEqual(result, {"tool0": 220.0})
+
+	def test_actualOnlyCountsWithoutAnyTarget(self):
+		# the overshoot while heating up must not replace the target the printer reported
+		plugin = createPlugin()
+		result = self.printTemperatures(plugin,
+										{"tool0": {"target": 0, "actual": 236.0}},
+										{"tool0": {"target": 220.0, "actual": 221.0}},
+										{"tool1": {"actual": 48.0}},
+										{"tool1": {"actual": 51.5}})
+		self.assertEqual(result, {"tool0": 220.0, "tool1": 51.5})
 
 	def test_usedToolThePrinterDoesNotReportIsUnknown(self):
 		# A tool changer printing on its 4th head while the connector only reports the first:

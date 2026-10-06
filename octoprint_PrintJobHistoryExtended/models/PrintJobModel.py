@@ -36,10 +36,10 @@ class PrintJobModel(BaseModel):
 
 	allTemperatures = None
 
-	# {"bed": 90.0, "tool0": 215.0, ...}, the highest of every reported sensor while printing.
-	# Not a database field: the temperatures are stored through TemperatureModel, this only
-	# carries the highest values from the tracking thread to the capture.
-	highestTemperatures = None
+	# {"bed": 90.0, "tool0": 215.0, ...}, per reported sensor the target held for most of the
+	# print. Not a database field: the temperatures are stored through TemperatureModel, this
+	# only carries the values from the tracking thread to the capture.
+	printTemperatures = None
 
 	filamentModelsByToolId = {}
 

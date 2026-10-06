@@ -1347,10 +1347,10 @@ class DatabaseManager(object):
 
 		return databaseId
 
-	def updatePrintJob(self, printJobModel, rollbackHandler = None):
-		return self._executeWithRetry(lambda: self._updatePrintJob(printJobModel, rollbackHandler), "updatePrintJob")
+	def updatePrintJob(self, printJobModel, rollbackHandler = None, withTemperatures = False):
+		return self._executeWithRetry(lambda: self._updatePrintJob(printJobModel, rollbackHandler, withTemperatures), "updatePrintJob")
 
-	def _updatePrintJob(self, printJobModel, rollbackHandler = None):
+	def _updatePrintJob(self, printJobModel, rollbackHandler = None, withTemperatures = False):
 		with self._database.atomic() as transaction:  # Opens new transaction.
 			try:
 				printJobModel.save()
@@ -1360,10 +1360,12 @@ class DatabaseManager(object):
 				for filamentModel in printJobModel.getFilamentModels():
 					filamentModel.save()
 
-				# # - Temperature not needed for an update
-				# for temperatureModel in printJobModel.getTemperatureModels():
-				# 	temperatureModel.printJob = printJobModel
-				# 	temperatureModel.save()
+				# - Temperature, only for the edit dialog: it is the one caller that changes
+				#   them. Leaving them out there silently dropped every temperature edit.
+				if (withTemperatures == True):
+					for temperatureModel in printJobModel.getTemperatureModels():
+						temperatureModel.printJob = printJobModel
+						temperatureModel.save()
 
 				# - Costs
 				if (printJobModel.getCosts() != None):
