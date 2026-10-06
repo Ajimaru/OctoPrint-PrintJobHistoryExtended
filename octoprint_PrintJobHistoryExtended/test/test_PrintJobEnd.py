@@ -269,6 +269,57 @@ class SaveEditedPrintJobTestCase(unittest.TestCase):
 		self.assertEqual(sorted(t.sensorValue for t in stored.getTemperatureModels()), ["210.0", "50.0"])
 
 
+class SdCardFileTestCase(unittest.TestCase):
+	"""K9 run 3: a file on the Marlin printer's SD card has metadata, but its "analysis" is None."""
+
+	def test_analysisWithoutValueIsNoAnalysis(self):
+		plugin = createPlugin()
+		self.assertEqual(plugin._readCalculatedFilamentMetaData({"analysis": None, "history": []}), None)
+		self.assertEqual(plugin._readCalculatedFilamentMetaData({"analysis": {"filament": None}}), None)
+		self.assertEqual(plugin._readCalculatedFilamentMetaData(None), None)
+		self.assertEqual(plugin._readCalculatedFilamentMetaData({"analysis": {"filament": {"tool0": {"length": 5.0}}}}),
+						 {"tool0": {"length": 5.0}})
+
+	def test_sdCardPrintKeepsTheSpool(self):
+		spoolManager = mock.Mock()
+		spoolManager.api_getJobFilamentUsage.return_value = None
+		spoolManager.api_getLastPrintJobUsage.return_value = None
+		spoolManager.api_getExtrusionAmount.return_value = [0.0]
+		spoolManager.api_getSelectedSpoolInformations.return_value = [
+			{"toolIndex": 0, "databaseId": 31, "spoolName": "Orange", "material": "PLA", "vendor": "Kingroon",
+			 "density": 1.23, "diameter": 1.75, "cost": 8.04, "weight": 1000.0}]
+		plugin = createPlugin()
+		plugin._spoolManagerPluginImplementation = spoolManager
+		plugin._spoolManagerPluginImplementationState = "enabled"
+		plugin._file_manager = mock.Mock()
+		plugin._file_manager.get_metadata.return_value = {"analysis": None, "history": []}
+		printJob = createStartedPrintJob()
+
+		plugin._createAndAssignFilamentModel(printJob, {"origin": "printer", "path": "rocket~1.gco"})
+
+		self.assertEqual(printJob.getFilamentModelByToolId("tool0").spoolName, "Orange")
+		total = printJob.getFilamentModelByToolId("total")
+		self.assertEqual((total.spoolName, total.calculatedLength, total.usedLength), ("Orange", 0.0, 0.0))
+
+	def test_toolWithoutLengthIsSkipped(self):
+		spoolManager = mock.Mock()
+		spoolManager.api_getJobFilamentUsage.return_value = {"tool0": None, "tool1": {"length": 120.0}}
+		spoolManager.api_getLastPrintJobUsage.return_value = None
+		spoolManager.api_getExtrusionAmount.return_value = None
+		spoolManager.api_getSelectedSpoolInformations.return_value = None
+		plugin = createPlugin()
+		plugin._spoolManagerPluginImplementation = spoolManager
+		plugin._spoolManagerPluginImplementationState = "enabled"
+		plugin._file_manager = mock.Mock()
+		plugin._file_manager.get_metadata.return_value = None
+		printJob = createStartedPrintJob()
+
+		plugin._createAndAssignFilamentModel(printJob, {"origin": "local", "path": "Rocket.gcode"})
+
+		self.assertEqual(printJob.getFilamentModelByToolId("tool0").calculatedLength, None)
+		self.assertEqual(printJob.getFilamentModelByToolId("total").calculatedLength, 120.0)
+
+
 class TasmotaSetupTestCase(unittest.TestCase):
 
 	def createPlugin(self, plugIp):

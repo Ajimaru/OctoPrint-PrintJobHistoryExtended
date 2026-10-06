@@ -317,23 +317,59 @@ class TemperatureTestCase(unittest.TestCase):
 	def storedTemperatures(self, printJob):
 		return [(t.sensorName, t.sensorValue) for t in printJob.getTemperatureModels()]
 
+	def printTemperatures(self, plugin, *samples):
+		samplesBySensor = {}
+		for currentTemps in samples:
+			plugin._collectTemperatureSample(samplesBySensor, currentTemps)
+		return plugin._resolvePrintTemperatures(samplesBySensor)
+
 	def test_collectsEveryReportedTool(self):
 		plugin = createPlugin()
-		highest = {}
-		plugin._collectHighestTemperatures(highest, {"bed": {"target": 90.0}, "tool0": {"target": 0, "actual": 54.0},
-													 "chamber": {"target": 40.0}})
-		plugin._collectHighestTemperatures(highest, {"bed": {"target": 60.0}, "tool0": {"target": 0, "actual": 49.0},
-													 "tool1": {"target": 250.0}})
-		self.assertEqual(highest, {"bed": 90.0, "tool0": 54.0, "tool1": 250.0})
+		result = self.printTemperatures(plugin,
+										{"bed": {"target": 60.0}, "tool0": {"target": 0, "actual": 54.0},
+										 "chamber": {"target": 40.0}},
+										{"bed": {"target": 60.0}, "tool0": {"target": 0, "actual": 49.0},
+										 "tool1": {"target": 250.0}})
+		self.assertEqual(result, {"bed": 60.0, "tool0": 54.0, "tool1": 250.0})
 
 	def test_heaterTheConnectorHasNoNameForIsSkipped(self):
 		# the Moonraker connector reports "heater_generic panda_breath" under None; it used to
 		# fail the whole sample, bed and nozzle included
 		plugin = createPlugin()
-		highest = {}
-		plugin._collectHighestTemperatures(highest, {"bed": {"target": 60.0}, None: {"target": 45.0},
-													 "tool0": {"target": 0, "actual": 32.0}})
-		self.assertEqual(highest, {"bed": 60.0, "tool0": 32.0})
+		result = self.printTemperatures(plugin, {"bed": {"target": 60.0}, None: {"target": 45.0},
+												 "tool0": {"target": 0, "actual": 32.0}})
+		self.assertEqual(result, {"bed": 60.0, "tool0": 32.0})
+
+	def test_purgeBeforeThePrintIsNotThePrintTemperature(self):
+		# A1 mini, 2026-10-06: calibration at 140, filament purge at 250, PLA printed at 220,
+		# cool-down with the heaters off. It was stored as 250.
+		plugin = createPlugin()
+		samples = ([{"bed": {"target": 65.0}, "tool0": {"target": 140.0}}] * 3 +
+				   [{"bed": {"target": 65.0}, "tool0": {"target": 250.0}}] * 4 +
+				   [{"bed": {"target": 65.0}, "tool0": {"target": 220.0}}] * 40 +
+				   [{"bed": {"target": 0, "actual": 60.0}, "tool0": {"target": 0, "actual": 180.0}}] * 2)
+		self.assertEqual(self.printTemperatures(plugin, *samples), {"bed": 65.0, "tool0": 220.0})
+
+	def test_firstLayerTemperatureDoesNotWin(self):
+		plugin = createPlugin()
+		samples = ([{"tool0": {"target": 220.0}}] * 8 + [{"tool0": {"target": 215.0}}] * 60)
+		self.assertEqual(self.printTemperatures(plugin, *samples), {"tool0": 215.0})
+
+	def test_onATieTheLaterTargetWins(self):
+		# a print stopped right after the purge: one sample each
+		plugin = createPlugin()
+		result = self.printTemperatures(plugin, {"tool0": {"target": 250.0}}, {"tool0": {"target": 220.0}})
+		self.assertEqual(result, {"tool0": 220.0})
+
+	def test_actualOnlyCountsWithoutAnyTarget(self):
+		# the overshoot while heating up must not replace the target the printer reported
+		plugin = createPlugin()
+		result = self.printTemperatures(plugin,
+										{"tool0": {"target": 0, "actual": 236.0}},
+										{"tool0": {"target": 220.0, "actual": 221.0}},
+										{"tool1": {"actual": 48.0}},
+										{"tool1": {"actual": 51.5}})
+		self.assertEqual(result, {"tool0": 220.0, "tool1": 51.5})
 
 	def test_usedToolThePrinterDoesNotReportIsUnknown(self):
 		# A tool changer printing on its 4th head while the connector only reports the first:
