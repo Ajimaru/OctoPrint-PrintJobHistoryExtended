@@ -455,24 +455,7 @@ class PrintJobHistoryExtendedPlugin(
 		totalFilamentModel.toolId = "total"
 		printJob.addFilamentModel(totalFilamentModel)
 
-		# - assign all spool informations to total
-		allSpoolNames = ""
-		allVendors = ""
-		allMaterials = ""
-
-		# A tool is worth recording when the slicer calculated something for it OR when a spool
-		# is selected on it. Printer-hosted prints (Bambu and other connectors) have no file
-		# meta data at all, so only the calculated dict is missing - the spool data is there
-		# and used to be thrown away, which left the whole dialog blank.
-		allToolIds = []
-		if (filamentCalculatedDict != None):
-			for toolId in filamentCalculatedDict:
-				if ((toolId in allToolIds) == False):
-					allToolIds.append(toolId)
-		if (selectedSpoolDataDict != None):
-			for toolId in selectedSpoolDataDict:
-				if ((toolId in allToolIds) == False):
-					allToolIds.append(toolId)
+		allToolIds = self._collectToolIdsOfPrintJob(filamentCalculatedDict, selectedSpoolDataDict)
 
 		for toolId in allToolIds:
 			filamentModel = printJob.getFilamentModelByToolId(toolId)
@@ -496,26 +479,9 @@ class PrintJobHistoryExtendedPlugin(
 			# Assign SpoolData (e.g. Name), no longer gated on calculatedLength > 0: a
 			# printer-hosted print has no calculated length at all, and an unknown length is
 			# no reason to forget which spool was mounted.
-			if (selectedSpoolDataDict != None and toolId in selectedSpoolDataDict):
-				spoolData = selectedSpoolDataDict[toolId]
-
-				filamentModel.spoolName = spoolData["spoolName"]
-				filamentModel.vendor = spoolData["vendor"]
-				filamentModel.material = spoolData["material"]
-				filamentModel.diameter = spoolData["diameter"]
-				filamentModel.density = spoolData["density"]
-
-				filamentModel.spoolCost = spoolData["spoolCost"]
-				filamentModel.weight = spoolData["weight"]
-
-				allSpoolNames = self._appendUniqueToCommaList(allSpoolNames, filamentModel.spoolName)
-				allVendors = self._appendUniqueToCommaList(allVendors, filamentModel.vendor)
-				allMaterials = self._appendUniqueToCommaList(allMaterials, filamentModel.material)
+			self._assignSelectedSpool(filamentModel, selectedSpoolDataDict)
 
 		totalFilamentModel.calculatedLength = calculatedTotalLength
-		totalFilamentModel.spoolName = allSpoolNames
-		totalFilamentModel.vendor = allVendors
-		totalFilamentModel.material = allMaterials
 
 		# - assign measured values
 		usedTotalLength = None
@@ -533,9 +499,13 @@ class PrintJobHistoryExtendedPlugin(
 				toolId = "tool" + str(toolUsage["toolIndex"])
 				filamentModel = printJob.getFilamentModelByToolId(toolId)
 				if (filamentModel == None):
+					# Like the backfill: a tool the job never used gets no row
+					if (StringUtils.transformToFloatOrZero(toolUsage.get("usedLength")) == 0):
+						continue
 					filamentModel = FilamentModel()
 					filamentModel.toolId = toolId
 					printJob.addFilamentModel(filamentModel)
+					self._assignSelectedSpool(filamentModel, selectedSpoolDataDict)
 
 				filamentModel.usedLength = toolUsage.get("usedLength")
 				filamentModel.usedWeight = toolUsage.get("usedWeight")
@@ -561,9 +531,12 @@ class PrintJobHistoryExtendedPlugin(
 					# to get an empty tool0 row next to its tool3 row.
 					if (StringUtils.transformToFloatOrZero(usedLength) == 0):
 						continue
+					# Extruded outside the calculated tools (manual extrusion during a pause, a
+					# purge on another head): the spool mounted there is what it came from
 					filamentModel = FilamentModel()
 					filamentModel.toolId = toolId
 					printJob.addFilamentModel(filamentModel)
+					self._assignSelectedSpool(filamentModel, selectedSpoolDataDict)
 
 				filamentModel.toolId = toolId
 				filamentModel.usedLength = usedLength
@@ -598,6 +571,73 @@ class PrintJobHistoryExtendedPlugin(
 
 			self._logger.info("total: usedTotalLength='"+str(usedTotalLength)+"'; usedTotaWeight='"+str(usedTotaWeight)+"'; usedTotalCost='"+str(usedTotalCost)+"'")
 
+		# - assign all spool informations to total, also of a tool only the measurement found
+		allSpoolNames = ""
+		allVendors = ""
+		allMaterials = ""
+		for filamentModel in printJob.getFilamentModels(withoutTotal=True):
+			allSpoolNames = self._appendUniqueToCommaList(allSpoolNames, filamentModel.spoolName)
+			allVendors = self._appendUniqueToCommaList(allVendors, filamentModel.vendor)
+			allMaterials = self._appendUniqueToCommaList(allMaterials, filamentModel.material)
+		totalFilamentModel.spoolName = allSpoolNames
+		totalFilamentModel.vendor = allVendors
+		totalFilamentModel.material = allMaterials
+
+	def _assignSelectedSpool(self, filamentModel, selectedSpoolDataDict):
+		if (selectedSpoolDataDict == None or (filamentModel.toolId in selectedSpoolDataDict) == False):
+			return
+		spoolData = selectedSpoolDataDict[filamentModel.toolId]
+
+		filamentModel.spoolName = spoolData["spoolName"]
+		filamentModel.vendor = spoolData["vendor"]
+		filamentModel.material = spoolData["material"]
+		filamentModel.diameter = spoolData["diameter"]
+		filamentModel.density = spoolData["density"]
+
+		filamentModel.spoolCost = spoolData["spoolCost"]
+		filamentModel.weight = spoolData["weight"]
+
+
+	# The tools that get a row at the capture. A tool is worth recording when the slicer
+	# calculated something for it OR when a spool is selected on it: printer-hosted prints
+	# (Bambu and other connectors) have no file meta data at all, so only the calculated dict
+	# is missing - the spool data is there and used to be thrown away, which left the whole
+	# dialog blank.
+	# Once the calculation names the tools the job uses (length > 0), every other tool is
+	# not part of it, whether a spool is merely mounted there or the slicer listed it with
+	# nothing: U1 job 189 printed on T3 got an empty tool2 row for the PETG spool on T2, and
+	# its total row read "PLA, PETG". All tools still count without such a calculation, or
+	# when the selected spools sit only on other tools - OctoPrint's own analysis files a
+	# connector job under tool0 whichever head prints it, so it cannot tell which one is right.
+	def _collectToolIdsOfPrintJob(self, filamentCalculatedDict, selectedSpoolDataDict):
+		allCalculatedToolIds = []
+		allUsedToolIds = []
+		if (filamentCalculatedDict != None):
+			for toolId in filamentCalculatedDict:
+				allCalculatedToolIds.append(toolId)
+				toolAnalysis = filamentCalculatedDict[toolId]
+				if (isinstance(toolAnalysis, dict) and StringUtils.transformToFloatOrZero(toolAnalysis.get("length")) > 0):
+					allUsedToolIds.append(toolId)
+
+		allSpoolToolIds = []
+		if (selectedSpoolDataDict != None):
+			allSpoolToolIds = list(selectedSpoolDataDict)
+
+		allToolIds = []
+		for toolId in allCalculatedToolIds + allSpoolToolIds:
+			if ((toolId in allToolIds) == False):
+				allToolIds.append(toolId)
+
+		if (len(allUsedToolIds) == 0):
+			return allToolIds
+		isSpoolOnUsedTool = any(toolId in allSpoolToolIds for toolId in allUsedToolIds)
+		if (len(allSpoolToolIds) > 0 and isSpoolOnUsedTool == False):
+			return allToolIds
+
+		allUnusedToolIds = [toolId for toolId in allToolIds if toolId not in allUsedToolIds]
+		if (len(allUnusedToolIds) > 0):
+			self._logger.info("No row for " + str(allUnusedToolIds) + ", the job uses only " + str(allUsedToolIds))
+		return allUsedToolIds
 
 	# read the total extrusion of each tool, like this
 	# return [123.123, 234.234, 0, 0]
