@@ -129,7 +129,7 @@ class ImageSourceTest(unittest.TestCase):
 
 		plugin._grabImageInBackground("camera", SNAPSHOT_FILENAME, "printer", "a.gcode")
 
-		plugin._takePreviewImage.assert_called_once_with(SNAPSHOT_FILENAME, "printer", "a.gcode")
+		plugin._takePreviewImage.assert_called_once_with(SNAPSHOT_FILENAME, "printer", "a.gcode", None)
 		plugin._sendDataToClient.assert_called_once()
 
 	def test_previewFirstWhenItIsTheSource(self):
@@ -188,8 +188,16 @@ class GrabImageTest(unittest.TestCase):
 		threadClass.assert_called_once()
 		kwargs = threadClass.call_args.kwargs
 		self.assertEqual(plugin._grabImageInBackground, kwargs["target"])
-		self.assertEqual(("thumbnail", SNAPSHOT_FILENAME, "printer", "a.3mf"), kwargs["args"])
+		self.assertEqual(("thumbnail", SNAPSHOT_FILENAME, "printer", "a.3mf", None), kwargs["args"])
 		threadClass.return_value.start.assert_called_once()
+
+	def test_previewReadAtTheStartGoesAlong(self):
+		plugin = createPlugin({"imageSourceAfterPrint": "thumbnail"})
+		plugin._currentPrintJobModel.previewImageAtStart = b"png-bytes"
+
+		threadClass = self.grab(plugin)
+
+		self.assertEqual(b"png-bytes", threadClass.call_args.kwargs["args"][4])
 
 	def test_snapshotTheGcodeAskedForIsKept(self):
 		plugin = createPlugin({"imageSourceAfterPrint": "camera"})
@@ -257,6 +265,35 @@ class PreviewImageTest(unittest.TestCase):
 
 		self.assertFalse(plugin._takePreviewImage(SNAPSHOT_FILENAME, "local", "a.gcode"))
 		plugin._cameraManager.takePluginThumbnail.assert_not_called()
+
+	def test_previewReadAtTheStartNeedsNoPrinter(self):
+		# A1 mini, 2026-10-06: the connection dropped, the failed job was captured without a
+		# printer storage to read the preview from
+		fileManager = FakeFileManager(thumbnail=IOError("No storage configured for destination printer"))
+		plugin = createPlugin(fileManager=fileManager)
+		plugin._cameraManager.storeThumbnail.return_value = True
+
+		self.assertTrue(plugin._takePreviewImage(SNAPSHOT_FILENAME, "printer", "a.3mf", b"png-bytes"))
+		plugin._cameraManager.storeThumbnail.assert_called_once_with(SNAPSHOT_FILENAME, b"png-bytes")
+		self.assertEqual(0, fileManager.readThumbnailCalls)
+
+	def test_unreadablePreviewFromTheStartFallsBackToTheFile(self):
+		handle = FakeHandle(b"png-from-file")
+		fileManager = FakeFileManager(thumbnail=(types.SimpleNamespace(name="a.png", sizehint="300x300"), handle))
+		plugin = createPlugin(fileManager=fileManager)
+		plugin._cameraManager.storeThumbnail.side_effect = [IOError("cannot identify image file"), True]
+
+		self.assertTrue(plugin._takePreviewImage(SNAPSHOT_FILENAME, "printer", "a.3mf", b"garbage"))
+		self.assertEqual(mock.call(SNAPSHOT_FILENAME, b"png-from-file"), plugin._cameraManager.storeThumbnail.call_args)
+
+	def test_readPreviewImageReturnsTheBytes(self):
+		handle = FakeHandle(b"png-bytes")
+		fileManager = FakeFileManager(thumbnail=(types.SimpleNamespace(name="a.png", sizehint="300x300"), handle))
+		plugin = createPlugin(fileManager=fileManager)
+
+		self.assertEqual(b"png-bytes", plugin._readFilePreviewImage("printer", "a.3mf"))
+		self.assertTrue(handle.closed)
+		self.assertEqual(None, createPlugin(fileManager=FakeFileManager(hasThumbnail=False))._readFilePreviewImage("printer", "a.3mf"))
 
 
 class M118ActionTest(unittest.TestCase):

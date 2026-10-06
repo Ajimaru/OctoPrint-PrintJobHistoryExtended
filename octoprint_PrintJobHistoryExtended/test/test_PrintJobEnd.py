@@ -320,6 +320,189 @@ class SdCardFileTestCase(unittest.TestCase):
 		self.assertEqual(printJob.getFilamentModelByToolId("total").calculatedLength, 120.0)
 
 
+def createSpoolManager(jobFilamentUsage=None, extrusionAmount=None, selectedSpools=None):
+	spoolManager = mock.Mock()
+	spoolManager.api_getJobFilamentUsage.return_value = jobFilamentUsage
+	spoolManager.api_getLastPrintJobUsage.return_value = None
+	spoolManager.api_getExtrusionAmount.return_value = extrusionAmount
+	spoolManager.api_getSelectedSpoolInformations.return_value = selectedSpools
+	return spoolManager
+
+
+def createPluginWithSpoolManager(spoolManager, metadata=None):
+	plugin = createPlugin()
+	plugin._spoolManagerPluginImplementation = spoolManager
+	plugin._spoolManagerPluginImplementationState = "enabled"
+	plugin._file_manager = mock.Mock()
+	if (isinstance(metadata, Exception)):
+		plugin._file_manager.get_metadata.side_effect = metadata
+	else:
+		plugin._file_manager.get_metadata.return_value = metadata
+	return plugin
+
+
+class ConnectorPrintJobTestCase(unittest.TestCase):
+	"""Total test on all three printers, 2026-10-06: printer-hosted jobs on U1 (Moonraker) and A1 mini (Bambu)."""
+
+	WHITE_ON_T3 = [{"toolIndex": 3, "databaseId": 110, "spoolName": "White", "material": "PLA", "vendor": "Kingroon",
+					"density": 1.24, "diameter": 1.75, "cost": 8.0, "weight": 792.2}]
+
+	def test_odometerToolTheJobDoesNotUseGetsNoRow(self):
+		# U1 job printed on T3: the odometer reports 0 for all four heads, tool0 got an empty row
+		plugin = createPluginWithSpoolManager(createSpoolManager(jobFilamentUsage={"tool3": {"length": 407.39}},
+																  extrusionAmount=[0.0, 0.0, 0.0, 0.0],
+																  selectedSpools=self.WHITE_ON_T3))
+		printJob = createStartedPrintJob()
+
+		plugin._createAndAssignFilamentModel(printJob, {"origin": "printer", "path": "total_test_1_V2_U1.gcode"})
+
+		self.assertEqual(sorted(f.toolId for f in printJob.getFilamentModels()), ["tool3", "total"])
+		tool3 = printJob.getFilamentModelByToolId("tool3")
+		self.assertEqual((tool3.calculatedLength, tool3.usedLength, tool3.spoolName), (407.39, 0.0, "White"))
+
+	def test_odometerToolThatExtrudedKeepsItsRow(self):
+		# an unsliced file printed without a spool selected: the measured length is all there is
+		plugin = createPluginWithSpoolManager(createSpoolManager(extrusionAmount=[12.5, 0.0]))
+		printJob = createStartedPrintJob()
+
+		plugin._createAndAssignFilamentModel(printJob, {"origin": "local", "path": "Rocket.gcode"})
+
+		self.assertEqual(sorted(f.toolId for f in printJob.getFilamentModels()), ["tool0", "total"])
+		self.assertEqual(printJob.getFilamentModelByToolId("tool0").usedLength, 12.5)
+
+	def test_calculatedFilamentFromTheStartWhenThePrinterIsGone(self):
+		# A1 mini: connection lost, PrintFailed is captured without a printer storage
+		plugin = createPluginWithSpoolManager(createSpoolManager(extrusionAmount=[0.0]),
+											  metadata=RuntimeError("No storage configured for destination printer"))
+		printJob = createStartedPrintJob()
+		printJob.calculatedFilamentAtStart = {"tool0": {"length": 310.0}}
+
+		plugin._createAndAssignFilamentModel(printJob, {"origin": "printer", "path": "rocket.gcode.3mf"})
+
+		self.assertEqual(printJob.getFilamentModelByToolId("total").calculatedLength, 310.0)
+
+	def test_calculatedFilamentOfTheEndWins(self):
+		plugin = createPluginWithSpoolManager(createSpoolManager(jobFilamentUsage={"tool0": {"length": 311.2}},
+																  extrusionAmount=[0.0]))
+		printJob = createStartedPrintJob()
+		printJob.calculatedFilamentAtStart = {"tool0": {"length": 99.0}}
+
+		plugin._createAndAssignFilamentModel(printJob, {"origin": "printer", "path": "total_~1.gco"})
+
+		self.assertEqual(printJob.getFilamentModelByToolId("total").calculatedLength, 311.2)
+
+	def test_fileDataIsRememberedAtTheStart(self):
+		plugin = createPluginWithSpoolManager(createSpoolManager(jobFilamentUsage={"tool0": {"length": 310.0}}))
+		plugin._readFilePreviewImage = mock.Mock(return_value=b"png-bytes")
+		printJob = createStartedPrintJob()
+		plugin._currentPrintJobModel = printJob
+
+		plugin._rememberFileDataAtStart(printJob, "printer", "rocket.gcode.3mf")
+
+		self.assertEqual(printJob.calculatedFilamentAtStart, {"tool0": {"length": 310.0}})
+		self.assertEqual(printJob.previewImageAtStart, b"png-bytes")
+		plugin._readFilePreviewImage.assert_called_once_with("printer", "rocket.gcode.3mf")
+
+	def test_startFallsBackToTheFileAnalysis(self):
+		plugin = createPluginWithSpoolManager(createSpoolManager(),
+											  metadata={"analysis": {"filament": {"tool0": {"length": 397.0}}}})
+		plugin._readFilePreviewImage = mock.Mock(return_value=None)
+		printJob = createStartedPrintJob()
+		plugin._currentPrintJobModel = printJob
+
+		plugin._rememberFileDataAtStart(printJob, "printer", "rocket_PLA_6m53s.gcode")
+
+		self.assertEqual(printJob.calculatedFilamentAtStart, {"tool0": {"length": 397.0}})
+		self.assertEqual(printJob.previewImageAtStart, None)
+
+	def test_failingStartReadIsNoError(self):
+		plugin = createPluginWithSpoolManager(createSpoolManager())
+		plugin._readJobFilamentUsageFromPeer = mock.Mock(side_effect=RuntimeError("boom"))
+		printJob = createStartedPrintJob()
+		plugin._currentPrintJobModel = printJob
+
+		plugin._rememberFileDataAtStart(printJob, "printer", "a.3mf")
+
+		self.assertEqual(printJob.calculatedFilamentAtStart, None)
+
+	def test_jobOverBeforeTheDelayReadsNothing(self):
+		plugin = createPluginWithSpoolManager(createSpoolManager(jobFilamentUsage={"tool0": {"length": 310.0}}))
+		plugin._readFilePreviewImage = mock.Mock()
+		printJob = createStartedPrintJob()
+		plugin._currentPrintJobModel = createStartedPrintJob()  # the next print already
+
+		plugin._rememberFileDataAtStart(printJob, "printer", "rocket.gcode.3mf")
+
+		self.assertEqual(printJob.calculatedFilamentAtStart, None)
+		plugin._spoolManagerPluginImplementation.api_getJobFilamentUsage.assert_not_called()
+		plugin._readFilePreviewImage.assert_not_called()
+
+	def test_startReadOnlyForPrinterHostedFilesWithAName(self):
+		plugin = createPlugin()
+		cases = [("local", "Rocket.gcode", False), ("printer", "???", False), ("printer", "", False),
+				 ("printer", "rocket.gcode.3mf", True)]
+		for origin, path, expectThread in cases:
+			printJob = createStartedPrintJob()
+			printJob.fileOrigin = origin
+			printJob.filePathName = path
+			with mock.patch("octoprint_PrintJobHistoryExtended.threading.Thread") as threadClass:
+				plugin._rememberFileDataAtStartAsync(printJob)
+			self.assertEqual(threadClass.called, expectThread, origin + ":" + path)
+			if (expectThread):
+				self.assertEqual(threadClass.call_args.kwargs["args"], (printJob, origin, path, 30))
+				threadClass.return_value.start.assert_called_once()
+
+	def createAdoptedJob(self):
+		# what the Bambu connector reports when it finds the printer already printing
+		printJob = createStartedPrintJob()
+		printJob.fileOrigin = "printer"
+		printJob.fileName = "???"
+		printJob.filePathName = "???"
+		printJob.fileSize = None
+		return printJob
+
+	def test_fileOfAnAdoptedJobIsTakenFromTheEnd(self):
+		plugin = createPlugin()
+		printJob = self.createAdoptedJob()
+		plugin._currentPrintJobModel = printJob
+		plugin._capturePrintJobData = mock.Mock()
+
+		plugin._printJobFinished("canceled", {"origin": "printer", "path": "rocket.gcode.3mf",
+											  "name": "rocket.gcode.3mf", "size": 270048})
+
+		self.assertEqual((printJob.fileOrigin, printJob.filePathName, printJob.fileName, printJob.fileSize),
+						 ("printer", "rocket.gcode.3mf", "rocket.gcode.3mf", 270048))
+		self.assertEqual(plugin._capturePrintJobData.call_args[0][1]["path"], "rocket.gcode.3mf")
+
+	def test_adoptedJobWithoutNameInTheEndUsesThePath(self):
+		plugin = createPlugin()
+		printJob = self.createAdoptedJob()
+		plugin._currentPrintJobModel = printJob
+
+		plugin._adoptFileFromEndPayload({"origin": "printer", "path": "cache/rocket.gcode.3mf"})
+
+		self.assertEqual((printJob.filePathName, printJob.fileName), ("cache/rocket.gcode.3mf", "rocket.gcode.3mf"))
+
+	def test_endThatDoesNotKnowTheFileEitherChangesNothing(self):
+		plugin = createPlugin()
+		printJob = self.createAdoptedJob()
+		plugin._currentPrintJobModel = printJob
+
+		plugin._adoptFileFromEndPayload({"origin": "printer", "path": "???", "name": "???"})
+		plugin._adoptFileFromEndPayload({"connector": "bambu"})
+
+		self.assertEqual((printJob.filePathName, printJob.fileName), ("???", "???"))
+
+	def test_knownFileIsNotReplacedByTheEnd(self):
+		plugin = createPlugin()
+		printJob = createStartedPrintJob()
+		plugin._currentPrintJobModel = printJob
+
+		plugin._adoptFileFromEndPayload({"origin": "printer", "path": "other.gcode", "name": "other.gcode"})
+
+		self.assertEqual((printJob.fileOrigin, printJob.filePathName), ("local", "folder/Rocket.gcode"))
+
+
 class TasmotaSetupTestCase(unittest.TestCase):
 
 	def createPlugin(self, plugIp):

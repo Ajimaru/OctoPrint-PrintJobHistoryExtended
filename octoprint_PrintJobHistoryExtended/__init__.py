@@ -68,6 +68,10 @@ TECHNICAL_LOG_FILE_NAME = "plugin_PrintJobHistoryExtended_singlePrintJob.log"
 # failed: the log was lost and the user got an error popup. Some headroom below the limit.
 TECHNICAL_LOG_MAX_BYTES = 60000
 
+# How long after PRINT_STARTED a printer-hosted file is read for the fallback the capture
+# needs when the printer is gone by then (see _rememberFileDataAtStartAsync).
+REMEMBER_FILE_DATA_DELAY_IN_SECONDS = 30
+
 # Settings that must not be carried over: the two path keys point into the *old* plugin's
 # data folder and would send this install back to the legacy database, and the versions
 # describe the installed plugin and its settings format rather than a user choice.
@@ -430,6 +434,10 @@ class PrintJobHistoryExtendedPlugin(
 		filamentCalculatedDict = self._readJobFilamentUsageFromPeer(payload.get("origin"), filePath)
 		if (filamentCalculatedDict == None):
 			filamentCalculatedDict = self._readCalculatedFilamentMetaData(fileData)
+		# The printer storage is gone when the connection dropped (see _rememberFileDataAtStart)
+		if (filamentCalculatedDict == None and printJob.calculatedFilamentAtStart != None):
+			self._logger.info("Taking the calculated filament read at the start of the print: " + str(printJob.calculatedFilamentAtStart))
+			filamentCalculatedDict = printJob.calculatedFilamentAtStart
 		# Preferred source: usage SpoolManagerExtended captured while booking the finished job.
 		# It survives the odometer reset and covers printer-storage prints - but only once
 		# the peer has actually booked, which is why the reader verifies the snapshot age.
@@ -543,11 +551,16 @@ class PrintJobHistoryExtendedPlugin(
 			usedTotalLength = 0.0
 			usedTotaWeight = 0.0
 			usedTotalCost = 0.0
-			toolIndex = 0
-			for usedLength in filamentExtrusionArray:
+			for toolIndex, usedLength in enumerate(filamentExtrusionArray):
 				toolId = "tool" + str(toolIndex)
 				filamentModel = printJob.getFilamentModelByToolId(toolId)
 				if (filamentModel == None):
+					# The odometer reports every tool of the printer profile, and 0 for a job
+					# the printer hosts itself. A tool with no calculated length, no spool and
+					# nothing extruded is not part of this job: a U1 job printed on T3 used
+					# to get an empty tool0 row next to its tool3 row.
+					if (StringUtils.transformToFloatOrZero(usedLength) == 0):
+						continue
 					filamentModel = FilamentModel()
 					filamentModel.toolId = toolId
 					printJob.addFilamentModel(filamentModel)
@@ -568,8 +581,6 @@ class PrintJobHistoryExtendedPlugin(
 					usedTotalCost = usedTotalCost + filamentModel.usedCost
 
 				self._logger.info(toolId + ": usedLength='"+str(usedLength)+"'; usedWeight='"+str(filamentModel.usedWeight)+"'; usedCost='"+str(filamentModel.usedCost)+"'")
-
-				toolIndex = toolIndex + 1
 
 			# The odometer reads zero for a job the printer streams itself (it never passes
 			# through OctoPrint), and also when SpoolManagerExtended booked - and reset - before
@@ -770,6 +781,8 @@ class PrintJobHistoryExtendedPlugin(
 		# Per instance, because the attribute is declared on the class - a leftover from the
 		# previous job would otherwise be attributed to this one.
 		self._currentPrintJobModel.printTemperatures = None
+		self._currentPrintJobModel.calculatedFilamentAtStart = None
+		self._currentPrintJobModel.previewImageAtStart = None
 
 		self._currentPrintJobModel.fileOrigin = payload["origin"]
 		self._currentPrintJobModel.fileName = payload["name"]
@@ -1535,6 +1548,49 @@ class PrintJobHistoryExtendedPlugin(
 		# dead by the time the job is captured.
 		self._databaseManager.releaseThreadConnection()
 
+		self._rememberFileDataAtStartAsync(self._currentPrintJobModel)
+
+
+	# A printer-hosted file can only be read while the printer is connected. A job that fails
+	# BECAUSE the connection dropped is captured after its printer storage is gone: A1 mini,
+	# 2026-10-06, stored without its calculated 310 mm and without a preview. So both are read
+	# once at the start as well, and the capture falls back to them. In a thread of its own:
+	# the preview of a file on a Bambu printer means downloading the whole 3MF first.
+	# A local file stays readable, and a job the connector adopted without knowing its file
+	# ("???") has nothing to read yet.
+	# Not right at the start: SpoolManagerExtended downloads and parses a Bambu 3MF it has
+	# not seen yet in its own PrintStarted handler, and a second download of the same file at
+	# the same moment could fail on the printer's FTPS. Once it is done, this is a cache hit.
+	def _rememberFileDataAtStartAsync(self, printJobModel):
+		if (printJobModel.fileOrigin == FileDestinations.LOCAL or self._isPlaceholderFilePath(printJobModel.filePathName)):
+			return
+		thread = threading.Thread(name="RememberFileDataAtStart",
+								  target=self._rememberFileDataAtStart,
+								  args=(printJobModel, printJobModel.fileOrigin, printJobModel.filePathName,
+										REMEMBER_FILE_DATA_DELAY_IN_SECONDS))
+		thread.daemon = True
+		thread.start()
+
+
+	def _rememberFileDataAtStart(self, printJobModel, fileOrigin, filePath, delayInSeconds=0):
+		time.sleep(delayInSeconds)
+		# Over already: the capture has read the file itself, or found it gone
+		if (self._currentPrintJobModel is not printJobModel):
+			return
+		try:
+			calculatedFilament = self._readJobFilamentUsageFromPeer(fileOrigin, filePath)
+			if (calculatedFilament == None):
+				calculatedFilament = self._readCalculatedFilamentMetaData(self._readFileMetaData(fileOrigin, filePath))
+			printJobModel.calculatedFilamentAtStart = calculatedFilament
+			printJobModel.previewImageAtStart = self._readFilePreviewImage(fileOrigin, filePath)
+		except Exception as e:
+			self._logger.warning("Could not read the file data at the start of the print: " + str(e))
+
+
+	# The Bambu connector adopts a print it finds already running as path and name "???"
+	def _isPlaceholderFilePath(self, filePath):
+		return StringUtils.isEmpty(filePath) or filePath == "???"
+
 	#### print job finished
 	# printStatus = "success", "failed", "canceled"
 	def _printJobFinished(self, printStatus, payload):
@@ -1546,6 +1602,7 @@ class PrintJobHistoryExtendedPlugin(
 			self._logger.warning("Print job ended with status '" + printStatus + "', but no print job is running. Nothing to capture.")
 			return
 
+		self._adoptFileFromEndPayload(payload)
 		payload = self._completePayloadFromJobStart(payload)
 
 		# Start the capture without a connection left over on this thread (a stale one
@@ -1560,6 +1617,28 @@ class PrintJobHistoryExtendedPlugin(
 			# it (a repeated end event, the layer reports of a hand-jogged Z axis) must not
 			# land on it, nor be stored as another job.
 			self._currentPrintJobModel = None
+
+
+	# The opposite case: the start knew no file, the end does. After a reconnect the Bambu
+	# connector found the printer still printing and fired PrintStarted for "???"; by the
+	# end it had learned the real file from the printer (A1 mini, 2026-10-06). The job then
+	# takes the file over from the end event instead of being stored as "???".
+	def _adoptFileFromEndPayload(self, payload):
+		printJobModel = self._currentPrintJobModel
+		if (payload == None or self._isPlaceholderFilePath(printJobModel.filePathName) == False):
+			return
+		endPath = payload.get("path")
+		if (self._isPlaceholderFilePath(endPath)):
+			return
+
+		self._logger.info("The print job started without its file ('" + str(printJobModel.filePathName) + "'), taking '" + str(endPath) + "' from the end event")
+		printJobModel.filePathName = endPath
+		endName = payload.get("name")
+		printJobModel.fileName = endName if self._isPlaceholderFilePath(endName) == False else os.path.basename(endPath)
+		if (payload.get("origin") != None):
+			printJobModel.fileOrigin = payload.get("origin")
+		if (payload.get("size") != None):
+			printJobModel.fileSize = payload.get("size")
 
 
 	# The end event is supposed to name the file, but after a printer error OctoPrint
@@ -1778,17 +1857,18 @@ class PrintJobHistoryExtendedPlugin(
 		snapshotFilename = CameraManager.buildSnapshotFilename(self._currentPrintJobModel.printStartDateTime)
 		thread = threading.Thread(name="GrabPrintJobImage",
 								  target=self._grabImageInBackground,
-								  args=(imageSource, snapshotFilename, payload.get("origin"), payload.get("path")))
+								  args=(imageSource, snapshotFilename, payload.get("origin"), payload.get("path"),
+										self._currentPrintJobModel.previewImageAtStart))
 		thread.daemon = True
 		thread.start()
 
 
 	# Takes the image from the chosen source and, when that one has none to give, from the
 	# other one: an entry with the second best image is worth more than one without any.
-	def _grabImageInBackground(self, imageSource, snapshotFilename, fileOrigin, filePath):
+	def _grabImageInBackground(self, imageSource, snapshotFilename, fileOrigin, filePath, previewImageAtStart=None):
 		try:
 			webcam = ("webcam", lambda: self._cameraManager.takeSnapshot(snapshotFilename))
-			filePreview = ("file preview", lambda: self._takePreviewImage(snapshotFilename, fileOrigin, filePath))
+			filePreview = ("file preview", lambda: self._takePreviewImage(snapshotFilename, fileOrigin, filePath, previewImageAtStart))
 			if (imageSource == SettingsKeys.KEY_IMAGE_SOURCE_CAMERA):
 				imageSources = [webcam, filePreview]
 			else:
@@ -1810,26 +1890,47 @@ class PrintJobHistoryExtendedPlugin(
 	# itself, and for a printer-hosted file the connector fetches it from the printer
 	# (Moonraker, Bambu). Local files uploaded before, and UFP packages, only have the one a
 	# thumbnail plugin stored - hence that one as the second choice.
-	def _takePreviewImage(self, snapshotFilename, fileOrigin, filePath):
+	# A preview read at the start of the print is the same image, and comes first: it needs
+	# no second download from the printer, and it is there even when the printer is not.
+	def _takePreviewImage(self, snapshotFilename, fileOrigin, filePath, previewImageAtStart=None):
+		if (previewImageAtStart != None):
+			try:
+				self._logger.info("Taking the preview image read at the start of the print")
+				if (self._cameraManager.storeThumbnail(snapshotFilename, previewImageAtStart) == True):
+					return True
+			except Exception as e:
+				self._logger.warning("Could not store the preview image read at the start of the print: " + str(e))
 		if (self._takeFilePreviewImage(snapshotFilename, fileOrigin, filePath) == True):
 			return True
 		return self._takePluginThumbnailImage(snapshotFilename, fileOrigin, filePath)
 
 
 	def _takeFilePreviewImage(self, snapshotFilename, fileOrigin, filePath):
+		imageData = self._readFilePreviewImage(fileOrigin, filePath)
+		if (imageData == None):
+			return False
+		try:
+			return self._cameraManager.storeThumbnail(snapshotFilename, imageData)
+		except Exception as e:
+			self._logger.warning("Could not take the preview image of '" + str(filePath) + "': " + str(e))
+			return False
+
+
+	# The bytes of the largest preview the storage has for the file, or None
+	def _readFilePreviewImage(self, fileOrigin, filePath):
 		try:
 			# Truthiness on purpose: connectors answer has_thumbnail() with the thumbnail
 			# list or a folder name rather than a bool.
 			if (not self._file_manager.capabilities(fileOrigin).thumbnails
 				or not self._file_manager.has_thumbnail(fileOrigin, filePath)):
 				self._logger.info("No preview image in '" + str(filePath) + "' (origin '" + str(fileOrigin) + "')")
-				return False
+				return None
 
 			# without a size hint every storage answers with its largest preview
 			thumbnail = self._file_manager.read_thumbnail(fileOrigin, filePath)
 			if (thumbnail == None):
 				self._logger.info("The storage delivered no preview image for '" + str(filePath) + "'")
-				return False
+				return None
 
 			thumbnailInfo, thumbnailHandle = thumbnail
 			try:
@@ -1843,10 +1944,10 @@ class PrintJobHistoryExtendedPlugin(
 				thumbnailHandle.close()
 
 			self._logger.info("Read preview image '" + str(thumbnailInfo.name) + "' (" + str(thumbnailInfo.sizehint) + ") of '" + str(filePath) + "'")
-			return self._cameraManager.storeThumbnail(snapshotFilename, b"".join(chunks))
+			return b"".join(chunks)
 		except Exception as e:
 			self._logger.warning("Could not take the preview image of '" + str(filePath) + "': " + str(e))
-			return False
+			return None
 
 
 	# The preview a thumbnail plugin (Slicer Thumbnails, Cura Thumbnails) stored for the file

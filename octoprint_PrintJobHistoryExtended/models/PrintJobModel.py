@@ -41,6 +41,12 @@ class PrintJobModel(BaseModel):
 	# only carries the values from the tracking thread to the capture.
 	printTemperatures = None
 
+	# What a printer-hosted file offered at the start of the print: the calculated filament
+	# per tool and the preview image bytes. The printer storage goes away with the connection,
+	# so a job that failed because of it is captured from these. Not database fields either.
+	calculatedFilamentAtStart = None
+	previewImageAtStart = None
+
 	filamentModelsByToolId = {}
 
 	costModel = None
