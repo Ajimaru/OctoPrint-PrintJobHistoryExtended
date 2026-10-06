@@ -53,6 +53,9 @@ class SinglePrintJobReportTestCase(unittest.TestCase):
 		self.assertIn("Spoolname: White", report)
 		self.assertIn("Material: PETG", report)
 		self.assertIn("Used length: 0.43", report)
+		# the raw job data was the original author's debugging aid, not part of the report
+		self.assertNotIn("DEBUGGING-SECTION", report)
+		self.assertNotIn("&#39;filamentModels&#39;", report)
 
 	def test_everyToolOfAMultiToolJobIsNamed(self):
 		job = createJob("two_colours.gcode", {"tool3": createToolFilament("tool3", "White", "PLA"),
