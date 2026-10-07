@@ -739,8 +739,59 @@ $(function() {
         self.loadKnownInstances = function() {
             self.apiClient.callLoadKnownInstances(function(responseData) {
                 self.knownInstanceNames(responseData.instanceNames);
+                initInstanceFilter(responseData.currentInstanceName);
+            }, function() {
+                // without the list there is nothing to choose from, the table must still load
+                initInstanceFilter("");
             });
         };
+
+        // The instance filter starts on the instance the user has open and keeps the user's choice,
+        // "all" included, in this browser. Only the first call acts: a later reload of the list
+        // (after copying to an external database) must not change what the user is looking at.
+        var instanceFilterInitialised = false;
+
+        function initInstanceFilter(currentInstanceName) {
+            if (instanceFilterInitialised) {
+                return;
+            }
+            instanceFilterInitialised = true;
+
+            var tableHelper = self.printJobHistoryExtendedTableHelper;
+            var instanceNames = self.knownInstanceNames();
+            // The OctoPrint instances behind one reverse proxy share an origin and so their
+            // localStorage, hence the key carries the instance name.
+            var storageKey = "pjhe.table.instanceFilter." + currentInstanceName;
+
+            var selectedInstanceName = "all";
+            // With a single instance the filter row is hidden and cannot be changed. Filtering
+            // there would hide jobs stored without an instance name for good.
+            if (instanceNames.length > 1) {
+                var storedInstanceName = null;
+                try {
+                    storedInstanceName = localStorage.getItem(storageKey);
+                } catch (e) {
+                    // storage blocked, the default applies
+                }
+                if (storedInstanceName == "all" || instanceNames.indexOf(storedInstanceName) >= 0) {
+                    selectedInstanceName = storedInstanceName;
+                } else if (instanceNames.indexOf(currentInstanceName) >= 0) {
+                    selectedInstanceName = currentInstanceName;
+                }
+            }
+            tableHelper.selectedInstanceName(selectedInstanceName);
+
+            // subscribe after the start value is set: only the user's own choice is stored
+            tableHelper.selectedInstanceName.subscribe(function(newInstanceName) {
+                try {
+                    localStorage.setItem(storageKey, newInstanceName);
+                } catch (e) {
+                    // storage blocked, the choice is just not kept
+                }
+            });
+
+            tableHelper.releaseLoad();
+        }
 
         self.csvImportUploadButton = $("#settings-pjhe-importcsv-upload");
         self.csvImportUploadData = undefined;
@@ -1253,7 +1304,7 @@ $(function() {
             });
         }
 
-        self.printJobHistoryExtendedTableHelper = new PrintJobTableItemHelper(loadJobFunction, 25, "printStartDateTime", "all");
+        self.printJobHistoryExtendedTableHelper = new PrintJobTableItemHelper(loadJobFunction, 25, "printStartDateTime", "all", true);
 
         // - timeframe query
         self.allTimeFrames = ko.observableArray([
