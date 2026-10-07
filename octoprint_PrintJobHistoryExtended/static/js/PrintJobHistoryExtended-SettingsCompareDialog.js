@@ -1,5 +1,7 @@
 
 function CompareSlicerSettingsDialog(){
+    "use strict";
+
 
     var self = this;
 

@@ -1,6 +1,8 @@
 
 
 function PrintJobHistoryExtendedPluginCheckDialog(){
+    "use strict";
+
 
     var self = this;
 

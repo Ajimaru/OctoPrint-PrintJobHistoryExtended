@@ -1,6 +1,8 @@
 
 
 function PrintJobComponentFactory(pluginId) {
+    "use strict";
+
 
     this.pluginId = pluginId
     this.COMPONENT_PREFIX = "component_";

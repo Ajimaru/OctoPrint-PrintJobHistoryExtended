@@ -1,6 +1,8 @@
 
 
 function PrintJobHistoryExtendedAPIClient(pluginId, baseUrl) {
+    "use strict";
+
 
     this.pluginId = pluginId;
     this.baseUrl = baseUrl;

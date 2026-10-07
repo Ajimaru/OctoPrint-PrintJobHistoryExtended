@@ -1,5 +1,7 @@
 
 function PrintJobHistoryExtendedImportDialog(){
+    "use strict";
+
 
     var self = this;
 

@@ -6,6 +6,8 @@
  * holdInitialLoad (optional, true: no query is sent until releaseLoad() is called)
  */
  function PrintJobTableItemHelper(loadItemsFunction, defaultPageSize, defaultSortColumn, defaultFilterName, holdInitialLoad){
+    "use strict";
+
 
     var self = this;
 

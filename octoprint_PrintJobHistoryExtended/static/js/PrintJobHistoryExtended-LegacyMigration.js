@@ -5,6 +5,8 @@
  * and only needs the plugin id to build its urls.
  */
 function PrintJobHistoryExtendedLegacyMigration() {
+    "use strict";
+
 
     var self = this;
 
