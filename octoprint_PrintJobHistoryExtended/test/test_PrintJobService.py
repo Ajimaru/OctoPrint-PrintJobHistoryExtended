@@ -1,3 +1,5 @@
+import shutil
+import tempfile
 import unittest
 
 from octoprint_PrintJobHistoryExtended.common import StringUtils, DateTimeUtils
@@ -7,23 +9,25 @@ from octoprint_PrintJobHistoryExtended import DatabaseManager, FilamentModel, Te
 
 
 class PrintJobServiceTestCase(unittest.TestCase):
-	databaselocation = "/Users/o0632/Library/Application Support/OctoPrint/data/PrintJobHistory/"
 
 	def setUp(self):
 		self.init_database()
 		self.printJobService = PrintJobService(self.databaseManager)
 		self.rollBackPrintJobs = []
 
+	def tearDown(self):
+		self.databaseManager.closeDatabase()
+		shutil.rmtree(self.databaselocation)
 
-	def _clientOutput(message1, message2):
+	def _clientOutput(self, message1, message2):
 		print(message1)
 		print(message2)
 
 	def init_database(self):
-		logging.basicConfig(level=logging.DEBUG)
+		# a throw-away database per test, so the tests need no personal OctoPrint install
+		self.databaselocation = tempfile.mkdtemp()
 		testLogger = logging.getLogger("testLogger")
-		logging.info("Start Database-Test")
-		self.databaseManager = DatabaseManager(testLogger, True)
+		self.databaseManager = DatabaseManager(testLogger, False)
 		self.databaseManager.initDatabase(self.databaselocation, self._clientOutput)
 
 	def _test_createPrintJob(self):
@@ -101,14 +105,24 @@ class PrintJobServiceTestCase(unittest.TestCase):
 			self.databaseManager.deletePrintJob(printJobDatabaseId)
 
 	def test_readFilamentModels(self):
+		newPrintJob = self.printJobService.createWithDefaults()
+		newPrintJob.fileName = "Rocket.gcode"
+		newPrintJob.printStartDateTime = StringUtils.transformToDateTimeOrNone("12.03.2013 14:45")
+		toolFilament = FilamentModel()
+		toolFilament.toolId = "tool0"
+		newPrintJob.addFilamentModel(toolFilament)
+		databaseId = self.printJobService.savePrintJob(newPrintJob)
+		self.assertIsNotNone(databaseId, "the job could not be stored")
+
 		# - allFilaments
-		loadedPrintJobModel = self.printJobService.loadPrintJob(72)
+		loadedPrintJobModel = self.printJobService.loadPrintJob(databaseId)
 		allFilamentModels = loadedPrintJobModel.getFilamentModels()
 		self.assertEqual(len(allFilamentModels), 2, "'total' and 'tool0' filamentModel expected")
 
-		loadedPrintJobModel = self.printJobService.loadPrintJob(72)
+		loadedPrintJobModel = self.printJobService.loadPrintJob(databaseId)
 		allFilamentModels = loadedPrintJobModel.getFilamentModels(withoutTotal=True)
-		self.assertEqual(len(allFilamentModels), 1, "'total' filamentModel expected")
+		self.assertEqual(len(allFilamentModels), 1, "'tool0' filamentModel expected")
+		self.assertEqual(allFilamentModels[0].toolId, "tool0")
 
 
 

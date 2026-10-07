@@ -1,4 +1,6 @@
 import pprint
+import shutil
+import tempfile
 import unittest
 
 import peewee
@@ -16,21 +18,36 @@ from octoprint_PrintJobHistoryExtended.services.SlicerSettingsService import Sli
 
 class TestDatabase(unittest.TestCase):
 
-	databaselocation = "/Users/o0632/Library/Application Support/OctoPrint/data/PrintJobHistory/"
-
 	def setUp(self):
 		self.init_database()
+
+	def tearDown(self):
+		self.databaseManager.closeDatabase()
+		shutil.rmtree(self.databaselocation)
 
 	def _clientOutput(self, message1, message2):
 		print(message1)
 		print(message2)
 
 	def init_database(self):
-		logging.basicConfig(level=logging.DEBUG)
+		# a throw-away database per test, so the tests need no personal OctoPrint install
+		self.databaselocation = tempfile.mkdtemp()
 		testLogger = logging.getLogger("testLogger")
-		logging.info("Start Database-Test")
-		self.databaseManager = DatabaseManager(testLogger, True)
+		self.databaseManager = DatabaseManager(testLogger, False)
 		self.databaseManager.initDatabase(self.databaselocation, self._clientOutput)
+
+	def _insertPrintJob(self, fileName, startDateTime):
+		printJob = PrintJobModel()
+		printJob.fileName = fileName
+		printJob.fileOrigin = "local"
+		printJob.printStartDateTime = StringUtils.transformToDateTimeOrNone(startDateTime)
+		totalFilament = FilamentModel()
+		totalFilament.toolId = "total"
+		printJob.addFilamentModel(totalFilament)
+		toolFilament = FilamentModel()
+		toolFilament.toolId = "tool0"
+		printJob.addFilamentModel(toolFilament)
+		return self.databaseManager.insertPrintJob(printJob)
 
 	# TimeFrameSelection
 	def _test_queryJobs(self):
@@ -124,13 +141,20 @@ class TestDatabase(unittest.TestCase):
 		self.databaseManager.deletePrintJob(105)
 
 	def test_csvExportPrinjob(self):
+		self.assertIsNotNone(self._insertPrintJob("Rocket.gcode", "12.03.2013 14:45"))
+		self.assertIsNotNone(self._insertPrintJob("Benchy.gcode", "13.03.2013 09:10"))
 
 		# selectedDatabaseIds = flask.request.values["databaseIds"]
 		# allJobsModels = self._databaseManager.loadSelectedPrintJobs(selectedDatabaseIds)
 		allJobsModels = self.databaseManager.loadAllPrintJobs()
 
-		for csvLine in CSVExportImporter.transform2CSV(allJobsModels):
-			print(csvLine)
+		csvLines = list(CSVExportImporter.transform2CSV(allJobsModels))
+
+		self.assertEqual(len(csvLines), 3, "one header line and one line per job expected")
+		self.assertIn('"File Name"', csvLines[0])
+		# newest job first, like in the table
+		self.assertIn('"Benchy.gcode"', csvLines[1])
+		self.assertIn('"Rocket.gcode"', csvLines[2])
 
 
 	def _test_something(self):
