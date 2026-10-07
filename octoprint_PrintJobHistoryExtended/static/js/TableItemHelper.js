@@ -2,9 +2,10 @@
  * loadItemsFunction,
  * defaultPageSize,
  * defaultSortColumn,
- * defaultFilterName
+ * defaultFilterName,
+ * holdInitialLoad (optional, true: no query is sent until releaseLoad() is called)
  */
- function PrintJobTableItemHelper(loadItemsFunction, defaultPageSize, defaultSortColumn, defaultFilterName){
+ function PrintJobTableItemHelper(loadItemsFunction, defaultPageSize, defaultSortColumn, defaultFilterName, holdInitialLoad){
 
     var self = this;
 
@@ -41,6 +42,17 @@
     self.searchQuery = ko.observable("")
 
     self.isInitialLoadDone = false;
+    // The initial filter is only known after an async request. Without the hold the table asks
+    // once with the default filter and once with the real one, and the answers can arrive swapped.
+    self.isLoadHeld = (holdInitialLoad === true);
+
+    self.releaseLoad = function(){
+        if (self.isLoadHeld == false){
+            return;
+        }
+        self.isLoadHeld = false;
+        self._loadItems();
+    }
 
     self.selectAll = function(checkedValue){
         if (checkedValue == false){
@@ -63,6 +75,9 @@
 
     // ############################################################################################### private functions
     self._loadItems = function(){
+        if (self.isLoadHeld){
+            return;
+        }
         var tableQuery = self.getTableQuery();
         self.loadItemsFunction( tableQuery, self.items, self.totalItemCount, self.currentItemCount );
     }

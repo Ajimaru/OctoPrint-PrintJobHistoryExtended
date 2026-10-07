@@ -222,12 +222,16 @@ function PrintJobHistoryExtendedAPIClient(pluginId, baseUrl) {
         });
     }
 
-    this.callLoadKnownInstances = function(responseHandler){
+    this.callLoadKnownInstances = function(responseHandler, errorHandler){
         $.ajax({
             url: this.baseUrl + "plugin/"+this.pluginId+"/loadKnownInstances",
             type: "GET"
         }).done(function( data ){
             responseHandler(data)
+        }).fail(function(){
+            if (errorHandler != undefined){
+                errorHandler()
+            }
         });
     }
 
