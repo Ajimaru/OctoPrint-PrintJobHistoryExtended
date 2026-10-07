@@ -2408,6 +2408,14 @@ class PrintJobHistoryExtendedPlugin(
 		]
 
 
+	def is_template_autoescaped(self):
+		# Without this OctoPrint wraps the UI templates in "autoesc false" and logs a warning
+		# on every start; OctoPrint 2.1 enforces autoescaping anyway. The UI templates hold only
+		# plain-text _() strings, and the report templates go through render_template_string,
+		# which is autoescaped by the app regardless of this flag.
+		return True
+
+
 	def get_template_vars(self):
 		# the banner listens to legacyMigrationPending: something to migrate, not migrated yet
 		migrationAvailable = self._isLegacyMigrationAvailable()

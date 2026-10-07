@@ -68,6 +68,16 @@ class SinglePrintJobReportTestCase(unittest.TestCase):
 		self.assertIn("Material (tool3): PLA", report)
 		self.assertLess(report.index("(tool2)"), report.index("(tool3)"))
 
+	def test_noteTextIsEscaped(self):
+		# the note is free text from the user; the report is served as text/html
+		job = createJob("Rocket.gcode", {})
+		job["noteText"] = "<script>alert(1)</script>"
+
+		report = renderReport("Single", job)
+
+		self.assertIn("Notes: &lt;script&gt;alert(1)&lt;/script&gt;", report)
+		self.assertNotIn("<script>alert(1)", report)
+
 	def test_jobWithoutFilamentRows(self):
 		report = renderReport("Single", createJob("Rocket.gcode", {}))
 
@@ -77,6 +87,15 @@ class SinglePrintJobReportTestCase(unittest.TestCase):
 
 
 class MultiPrintJobReportTestCase(unittest.TestCase):
+
+	def test_noteTextIsEscaped(self):
+		job = createJob("Rocket.gcode", {})
+		job["noteText"] = "<script>alert(1)</script>"
+
+		report = renderReport("Multi", [job])
+
+		self.assertIn("Notes: &lt;script&gt;alert(1)&lt;/script&gt;", report)
+		self.assertNotIn("<script>alert(1)", report)
 
 	def test_jobWithoutFilamentRowsDoesNotBreakTheReport(self):
 		allJobs = [createJob("rocket_PLA_18m0s.gcode", {"tool0": createToolFilament("tool0", "Orange", "PLA"),
