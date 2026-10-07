@@ -1,5 +1,7 @@
 
 function StatisticDialog(){
+    "use strict";
+
 
     var self = this;
 

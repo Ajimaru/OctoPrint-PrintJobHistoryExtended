@@ -1,5 +1,7 @@
 
 function PrintJobHistoryExtendedImportDialog(){
+    "use strict";
+
 
     var self = this;
 
@@ -57,6 +59,8 @@ function PrintJobHistoryExtendedImportDialog(){
 
     /////////////////////////////////////////////////////////////////////////////////////////////////// UPDATE TEXT
     this.updateText = function(importData){
+
+                var errorMessage = "";
 
                 if (importData.importStatus) {
                     self.importStatus(importData.importStatus);

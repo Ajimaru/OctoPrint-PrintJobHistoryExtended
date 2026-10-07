@@ -13,6 +13,8 @@
 // - this plugin's included - and rebinds the shared button once its own request returns, so
 // "Reset Settings" on this plugin's page reset the other plugin's settings.
 function PrintJobHistoryExtendedResetSettingsUtilV3(pluginSettings) {
+    "use strict";
+
     const pluginSettingsFromPlugin = pluginSettings;
 
     const RESET_BUTTON_ID = "printJobHistoryExtended-resetSettingsButton";
