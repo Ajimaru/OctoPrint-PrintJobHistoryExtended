@@ -58,6 +58,8 @@ function PrintJobHistoryExtendedImportDialog(){
     /////////////////////////////////////////////////////////////////////////////////////////////////// UPDATE TEXT
     this.updateText = function(importData){
 
+                var errorMessage = "";
+
                 if (importData.importStatus) {
                     self.importStatus(importData.importStatus);
                     switch (importData.importStatus){

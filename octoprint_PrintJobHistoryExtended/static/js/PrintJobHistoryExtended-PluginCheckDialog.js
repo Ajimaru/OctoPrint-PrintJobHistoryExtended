@@ -5,7 +5,9 @@ function PrintJobHistoryExtendedPluginCheckDialog(){
     var self = this;
 
     self.apiClient = null;
-    myPluginSettings = null;
+    // declared per dialog: the MessageConfirmDialog assigns the same name, and its init()
+    // runs after this one, so undeclared both dialogs shared a single global
+    var myPluginSettings = null;
 
     self.missingPluginsDialog = null;
     self.missingPluginMessageExtended = null;
@@ -37,7 +39,7 @@ function PrintJobHistoryExtendedPluginCheckDialog(){
 
         self.confirmButton.unbind("click");
         self.confirmButton.bind("click", function() {
-            disableCheck = self.deactivatePluginCheck();
+            var disableCheck = self.deactivatePluginCheck();
             if (disableCheck == true) {
                 myPluginSettings.pluginCheckActivated(false)
                 self.apiClient.callDeactivatePluginCheck();

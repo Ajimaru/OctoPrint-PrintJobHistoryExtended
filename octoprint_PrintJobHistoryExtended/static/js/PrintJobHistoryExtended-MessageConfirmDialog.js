@@ -5,7 +5,9 @@ function PrintJobHistoryExtendedPluginMessageConfirmDialog(){
     var self = this;
 
     self.apiClient = null;
-    myPluginSettings = null;
+    // kept for symmetry with the other dialogs, but never read here; undeclared it used to
+    // overwrite the PluginCheckDialog's settings reference
+    var myPluginSettings = null;
 
     self.messageConfirmDialog = null;
     self.confirmMessageExtended = null;

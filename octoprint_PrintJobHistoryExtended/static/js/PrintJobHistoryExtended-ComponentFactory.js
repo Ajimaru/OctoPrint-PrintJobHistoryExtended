@@ -13,9 +13,13 @@ function PrintJobComponentFactory(pluginId) {
     */
     this.createDateTimePicker = function(elementId, showTimePicker){
 
+        // the default must be set here, not only in the branches below: an explicit "true"
+        // matches neither of them, and without a declaration the format was read from
+        // whatever the previously created picker had left in the global scope
+        var dateTimeFormat = 'd.m.Y H:i';
+
         if (showTimePicker == null){
             showTimePicker = true;
-            dateTimeFormat = 'd.m.Y H:i';
         }
         if (showTimePicker == false){
             dateTimeFormat = 'd.m.Y';
@@ -67,13 +71,13 @@ function PrintJobComponentFactory(pluginId) {
 */
     this.createHelloWorldComponent = function(name){
 
-        componentName = this.COMPONENT_PREFIX + "printstatusselection-" + name;
+        var componentName = this.COMPONENT_PREFIX + "printstatusselection-" + name;
 
         var componentViewModel = {
             hello: ko.observable("World")
         }
 
-        componentTemplate = "<b>Hello <span data-bind='text: hello'></span></b>";
+        var componentTemplate = "<b>Hello <span data-bind='text: hello'></span></b>";
 
         ko.components.register(componentName, {
             viewModel: { instance: componentViewModel },
