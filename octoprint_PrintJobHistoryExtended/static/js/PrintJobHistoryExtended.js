@@ -982,7 +982,10 @@ $(function() {
         self.onBeforeBinding = function() {
             // assign current pluginSettings
             self.pluginSettings = self.settingsViewModel.settings.plugins[PLUGIN_ID];
-            self.printJobEditDialog.init(self.apiClient, self.settingsViewModel.settings.webcam);
+            // the view model, not settings.webcam: that is still undefined here when the
+            // first settings response has not arrived yet.
+            // loginState is needed because /api/util/test demands a recent password entry.
+            self.printJobEditDialog.init(self.apiClient, self.settingsViewModel, self.loginState);
             self.pluginCheckDialog.init(self.apiClient, self.pluginSettings);
             self.messageConfirmDialog.init(self.apiClient, self.pluginSettings);
             self.csvImportDialog.init(self.apiClient);

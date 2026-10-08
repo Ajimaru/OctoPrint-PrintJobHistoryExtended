@@ -43,17 +43,63 @@ function PrintJobHistoryExtendedEditDialog(){
 
     self.webCamSettings = null;
 
+    // The settings view model, so the webcam values can be read when they are needed.
+    // `settings.webcam` is undefined until the first settings response arrives, and
+    // onBeforeBinding can run before that: grabbing the object once stored null and left
+    // every webcam read throwing. OctoPrint's own timelapse view model reads it the same
+    // lazy way.
+    self.settingsViewModel = null;
+
+    // OctoPrint's /api/util/test is admin-only AND requires the password to have been
+    // entered within accessControl.defaultReauthenticationTimeout (5 minutes by default).
+    // Without asking for it first the call comes back 403 "Please reauthenticate with your
+    // credentials", which the capture only reported as "Something went wrong".
+    self.loginState = null;
+
+    // The current webcam settings, or null while the settings have not been loaded yet.
+    // Read fresh every time instead of caching: the settings view model replaces its
+    // settings object on the first response, so anything kept from before is stale.
+    function _webCamSettings(){
+        if (self.settingsViewModel == null || self.settingsViewModel.settings == null){
+            return self.webCamSettings;
+        }
+        var webCamSettings = self.settingsViewModel.settings.webcam;
+        if (webCamSettings == null || typeof webCamSettings.snapshotUrl !== "function"){
+            return null;
+        }
+        self.webCamSettings = webCamSettings;
+        return webCamSettings;
+    }
+    self._webCamSettings = _webCamSettings;
+
+    // Run the callback, asking the user for their password first if the login session is
+    // too old for the endpoints that insist on a recent one. Falls back to calling straight
+    // through on an OctoPrint without that helper.
+    function _reauthenticateIfNecessary(callback){
+        if (self.loginState != null && typeof self.loginState.reauthenticateIfNecessary === "function"){
+            self.loginState.reauthenticateIfNecessary(callback);
+        } else {
+            callback();
+        }
+    }
+    self._reauthenticateIfNecessary = _reauthenticateIfNecessary;
+
     // "Computed" field-binding
     self.webCamEnabled = ko.pureComputed(function(){
-        if (self.webCamSettings.webcamEnabled != null){
-            return self.webCamSettings.webcamEnabled();
+        var webCamSettings = _webCamSettings();
+        if (webCamSettings == null){
+            return false;
+        }
+        if (webCamSettings.webcamEnabled != null){
+            return webCamSettings.webcamEnabled();
         } else {
-            return self.webCamSettings.snapshotUrl() != null && self.webCamSettings.streamUrl();
+            return webCamSettings.snapshotUrl() != null && webCamSettings.streamUrl();
         }
     });
     // "Computed" field-binding
     self.webcamRatioClass = ko.pureComputed(function() {
-        if (self.webCamSettings.streamRatio() == "4:3") {
+        var webCamSettings = _webCamSettings();
+        if (webCamSettings != null && webCamSettings.streamRatio() == "4:3") {
             return "ratio43";
         } else {
             return "ratio169";
@@ -82,10 +128,14 @@ function PrintJobHistoryExtendedEditDialog(){
 
     /////////////////////////////////////////////////////////////////////////////////////////////////// INIT
 
-    this.init = function(apiClient, webCamSettings){
+    this.init = function(apiClient, settingsViewModel, loginState){
         self.apiClient = apiClient;
 
-        self.webCamSettings = webCamSettings
+        // keep the view model, not settings.webcam: that object does not exist yet when
+        // the settings have not been received, and is only filled in later
+        self.settingsViewModel = settingsViewModel;
+        self.loginState = loginState;
+        self.webCamSettings = null;
 
         self.editPrintJobItemDialog = $("#dialog_printJobHistoryExtended_editPrintJobItem");
         self.snapshotSuccessMessageSpan = $("#printJobHistoryExtended-editdialog-success-message");
@@ -535,38 +585,65 @@ function PrintJobHistoryExtendedEditDialog(){
             // SHOW VIDEOSTREAM
             self.imageDisplayMode(IMAGEDISPLAYMODE_VIDEOSTREAM_LOADING);
 
-            var snapshotUrl = self.webCamSettings.snapshotUrl();
-            var streamUrl = self.webCamSettings.streamUrl();
-
-            if (snapshotUrl == null || streamUrl == null || snapshotUrl.length == 0 || streamUrl.length == 0) {
-                alert("Camera-Error: Please make sure that both stream- and snapshot-url is configured in your camera-settings")
+            var webCamSettings = self._webCamSettings();
+            if (webCamSettings == null){
+                // settings not loaded yet - without them there is no url to test
+                self.imageDisplayMode(IMAGEDISPLAYMODE_VIDEOSTREAM_ERROR);
+                self.snapshotErrorMessageSpan.show();
+                self.snapshotErrorMessageSpan.text("Camera settings are not loaded yet. Try again in a moment.");
+                return;
             }
 
-            OctoPrint.util.testUrl(snapshotUrl, {
-                method: "GET",
-                response: "bytes",
-                timeout: self.webCamSettings.streamTimeout(),
-//                validSsl: self.webcam_snapshotSslValidation(),
-                content_type_whitelist: ["image/*"]
-            })
-            .done(function(response){
-                // Check if videoStream is available
-                if (response.status == 200 && response.result == true){
-                    //show stream in image
-                    self.imageDisplayMode(IMAGEDISPLAYMODE_VIDEOSTREAM);
+            var snapshotUrl = webCamSettings.snapshotUrl();
+            var streamUrl = webCamSettings.streamUrl();
 
-                    $("#printJobHistoryExtended-videoStream").attr("src", self.webCamSettings.streamUrl());
-                    self.captureButtonText.text(takeSnapshotText);
-                } else {
-                    // VideoStream is not available
-                    self.imageDisplayMode(IMAGEDISPLAYMODE_VIDEOSTREAM_ERROR);
-                }
-            })
-            .fail(function() {
+            if (snapshotUrl == null || streamUrl == null || snapshotUrl.length == 0 || streamUrl.length == 0) {
+                // stop here: testing an empty url only produced a generic "went wrong"
                 self.imageDisplayMode(IMAGEDISPLAYMODE_VIDEOSTREAM_ERROR);
+                alert("Camera-Error: Please make sure that both stream- and snapshot-url is configured in your camera-settings")
+                return;
+            }
 
-                self.snapshotErrorMessageSpan.show();
-                self.snapshotErrorMessageSpan.text("Something went wrong. Try again!");
+            // ask for the password first if the session is older than the reauthentication
+            // timeout, otherwise /api/util/test answers 403. Same wrapper OctoPrint's own
+            // classic webcam settings use around this call.
+            _reauthenticateIfNecessary(function(){
+                OctoPrint.util.testUrl(snapshotUrl, {
+                    method: "GET",
+                    response: "bytes",
+                    timeout: webCamSettings.streamTimeout(),
+//                    validSsl: self.webcam_snapshotSslValidation(),
+                    content_type_whitelist: ["image/*"]
+                })
+                .done(function(response){
+                    // Check if videoStream is available
+                    if (response.status == 200 && response.result == true){
+                        //show stream in image
+                        self.imageDisplayMode(IMAGEDISPLAYMODE_VIDEOSTREAM);
+
+                        $("#printJobHistoryExtended-videoStream").attr("src", streamUrl);
+                        self.captureButtonText.text(takeSnapshotText);
+                    } else {
+                        // the url could be reached but did not return an image
+                        self.imageDisplayMode(IMAGEDISPLAYMODE_VIDEOSTREAM_ERROR);
+                        self.snapshotErrorMessageSpan.show();
+                        self.snapshotErrorMessageSpan.text("The snapshot URL did not return an image. Check your camera settings.");
+                    }
+                })
+                .fail(function(jqXHR){
+                    self.imageDisplayMode(IMAGEDISPLAYMODE_VIDEOSTREAM_ERROR);
+
+                    // say which error it was: a plain "went wrong" sent us looking in the
+                    // wrong place for a session that had simply gone stale
+                    var errorMessage = "Something went wrong. Try again!";
+                    if (jqXHR != null && jqXHR.status == 403){
+                        errorMessage = "Not allowed to test the camera URL. Log in again as an administrator and retry.";
+                    } else if (jqXHR != null && jqXHR.status != null && jqXHR.status != 0){
+                        errorMessage = "Could not test the camera URL (HTTP " + jqXHR.status + "). Try again!";
+                    }
+                    self.snapshotErrorMessageSpan.show();
+                    self.snapshotErrorMessageSpan.text(errorMessage);
+                });
             });
         } else {
             // TAKE SNAPSHOT
