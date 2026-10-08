@@ -346,8 +346,7 @@ function PrintJobHistoryExtendedEditDialog(){
         self.printJobItemForEdit.isRePrintable.subscribe(function(newValue){
             self.tooltipForSelection(self._buildTooltipForSelection());
         });
-        // trigger
-        self.printJobItemForEdit.isRePrintable.valueHasMutated();
+        self._refreshReprintableState();
 
         // Select first Tab
         $('a[href="#tab-pjhe-editjob-total"]').tab("show");
@@ -380,12 +379,20 @@ function PrintJobHistoryExtendedEditDialog(){
         self.unchangedNoteSnapshot = self._serializeNote();
     }
 
+    // Fields the server fills in by itself. They are not the user's edits, so a change to
+    // them must not make the dialog claim there is something to save. Whether the file can
+    // still be selected is answered after the dialog is already open, so it would otherwise
+    // always arrive after the snapshot was taken.
+    this.NOT_USER_EDITABLE_FIELDS = ["isRePrintable", "fullFileLocation"];
+
     this._serializeEditableFields = function(){
         if (self.printJobItemForEdit == null){
             return null;
         }
         try {
-            return ko.toJSON(self.printJobItemForEdit);
+            return ko.toJSON(self.printJobItemForEdit, function(key, value){
+                return self.NOT_USER_EDITABLE_FIELDS.indexOf(key) != -1 ? undefined : value;
+            });
         } catch (error){
             // Never let a serialization problem block closing the dialog.
             console.warn("PrintJobHistoryExtended: could not snapshot dialog fields", error);
@@ -527,6 +534,56 @@ function PrintJobHistoryExtendedEditDialog(){
 
     /////////////////////////////////////////////////////////////////////////////////////////////////// SELECT PRINT JOB
     self.tooltipForSelection = ko.observable("");
+    // "pending" while the server is being asked, then "done", or "failed" if it could not answer
+    self.selectionCheckState = ko.observable("pending");
+    self.notReprintableReason = ko.observable(null);
+
+    // Asks whether this job's file can still be selected. Done here instead of for every row
+    // of the table, because answering it touches the disk.
+    // Anything that swaps printJobItemForEdit for another item has to call this again,
+    // otherwise the button keeps the answer that belonged to the previous job.
+    this._refreshReprintableState = function(){
+        if (self.printJobItemForEdit == null){
+            return;
+        }
+        var databaseId = self.printJobItemForEdit.databaseId();
+        // the button is hidden without a databaseId (a new or cloned job), nothing to ask about
+        if (databaseId == null || databaseId == ""){
+            self.selectionCheckState("done");
+            self.notReprintableReason(null);
+            self.printJobItemForEdit.isRePrintable(false);
+            self.printJobItemForEdit.isRePrintable.valueHasMutated();
+            return;
+        }
+
+        // no answer yet means no selection: the button stays disabled until the server replies
+        self.selectionCheckState("pending");
+        self.notReprintableReason(null);
+        self.printJobItemForEdit.isRePrintable(false);
+        self.tooltipForSelection(self._buildTooltipForSelection());
+
+        var itemWhenAsked = self.printJobItemForEdit;
+        self.apiClient.callLoadPrintJobReprintable(databaseId, function(responseData){
+            // the dialog may show a different job by now
+            if (self.printJobItemForEdit != itemWhenAsked){
+                return;
+            }
+            self.printJobItemForEdit.fullFileLocation(responseData.fullFileLocation);
+            self.notReprintableReason(responseData.notReprintableReason);
+            self.selectionCheckState("done");
+            self.printJobItemForEdit.isRePrintable(responseData.isRePrintable == true);
+            // knockout stays quiet when the value did not change, but the tooltip still has to
+            // be rebuilt - the reason behind it may well have changed
+            self.printJobItemForEdit.isRePrintable.valueHasMutated();
+        }, function(){
+            if (self.printJobItemForEdit != itemWhenAsked){
+                return;
+            }
+            self.selectionCheckState("failed");
+            self.printJobItemForEdit.isRePrintable(false);
+            self.printJobItemForEdit.isRePrintable.valueHasMutated();
+        });
+    };
 
     this.selectForPrinting = function(){
         // This closes the dialog too, so unsaved edits would be lost just as silently.
@@ -540,6 +597,11 @@ function PrintJobHistoryExtendedEditDialog(){
             self._discardChangeSnapshot();
             self.editPrintJobItemDialog.modal('hide');
             self.closeDialogHandler(true);
+        }, function(errorData) {
+            // Deliberately quiet: the server already sent the error popup. Showing one here
+            // as well would tell the user the same thing twice.
+            // The dialog stays open on purpose, so unsaved edits survive a failed selection.
+            self._refreshReprintableState();
         });
     }
 
@@ -547,8 +609,18 @@ function PrintJobHistoryExtendedEditDialog(){
         var toolTip = "";
         if (self.printJobItemForEdit != null ){
             var fullPath = self.printJobItemForEdit.fullFileLocation();
-            if (self.printJobItemForEdit.isRePrintable() == true){
+            if (self.selectionCheckState() == "pending"){
+                toolTip = "Checking whether the file is still there...";
+            } else if (self.selectionCheckState() == "failed"){
+                toolTip = "Could not check whether the file is still there. Reopen the dialog to try again.";
+            } else if (self.printJobItemForEdit.isRePrintable() == true){
                 toolTip = "Print file: " + fullPath;
+            } else if (self.notReprintableReason() == "placeholder"){
+                toolTip = "Selecting not possible! The printer never reported which file it was printing.";
+            } else if (self.notReprintableReason() == "missing"){
+                toolTip = "Selecting not possible! This print job is no longer in the database.";
+            } else if (self.notReprintableReason() == "unresolvable"){
+                toolTip = "Selecting not possible! The storage could not work out where this file is.";
             } else {
                 toolTip = "Selecting not possible! File not found in " + fullPath;
             }

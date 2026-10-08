@@ -37,6 +37,7 @@ from .DatabaseManager import DatabaseManager
 from .CameraManager import CameraManager
 
 from octoprint_PrintJobHistoryExtended.common import StringUtils, DateTimeUtils, CameraSettingsMigration
+from octoprint_PrintJobHistoryExtended.common import PrintJobUtils
 
 # Identifier this plugin used before it was renamed to "PrintJobHistoryExtended". Both the
 # data folder (~/.octoprint/data/<identifier>/) and the settings namespace
@@ -1629,7 +1630,7 @@ class PrintJobHistoryExtendedPlugin(
 
 	# The Bambu connector adopts a print it finds already running as path and name "???"
 	def _isPlaceholderFilePath(self, filePath):
-		return StringUtils.isEmpty(filePath) or filePath == "???"
+		return PrintJobUtils.isPlaceholderFilePath(filePath)
 
 	#### print job finished
 	# printStatus = "success", "failed", "canceled"

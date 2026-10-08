@@ -21,6 +21,7 @@ from werkzeug.datastructures import Headers
 
 from octoprint.access.permissions import Permissions
 from octoprint.server.util.flask import no_firstrun_access
+from flask_login import current_user
 
 from octoprint.filemanager import FileDestinations
 
@@ -398,6 +399,50 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
                                 "allPrintJobs": allJobsAsDict
                             })
 
+    #######################################################################################   IS JOB REPRINTABLE
+    # Whether this job's file can still be selected for printing. Asked when the edit dialog
+    # opens, not for every row of the table: resolving it touches the disk, and a table page
+    # would pay that per row for a button only the dialog shows.
+    @octoprint.plugin.BlueprintPlugin.route("/printJobReprintable/<int:databaseId>", methods=["GET"])
+    @no_firstrun_access
+    def get_printjob_reprintable(self, databaseId):
+        if not Permissions.PLUGIN_PRINTJOBHISTORYEXTENDED_EDIT_JOB.can():
+            return "Insufficient rights", 403
+
+        try:
+            printJobModel = self._databaseManager.loadPrintJob(databaseId)
+            if (printJobModel == None):
+                # The table was showing a job that has since been deleted. Not worth a popup,
+                # the dialog just offers no selection.
+                return self._buildReprintableResponse(databaseId, False, "", "missing")
+
+            printJobPrintable = self._resolvePrintJobFile(printJobModel)
+            return self._buildReprintableResponse(databaseId,
+                                                  printJobPrintable["isRePrintable"],
+                                                  printJobPrintable["fullFileLocation"],
+                                                  printJobPrintable["notReprintableReason"])
+        except Exception as e:
+            # Never let this break the dialog - an unknown answer only means no selection.
+            self._logger.exception("Could not check if print job '" + str(databaseId) + "' is reprintable: " + str(e))
+            return self._buildReprintableResponse(databaseId, False, "", "unresolvable")
+
+    def _buildReprintableResponse(self, databaseId, isRePrintable, fullFileLocation, notReprintableReason):
+        # the storage path is left out on purpose: the browser has no use for it and the
+        # selection resolves it again anyway
+        return flask.jsonify({
+            "databaseId": databaseId,
+            "isRePrintable": isRePrintable,
+            "fullFileLocation": fullFileLocation,
+            "notReprintableReason": notReprintableReason
+        })
+
+    def _resolvePrintJobFile(self, printJobModel):
+        return PrintJobUtils.isPrintJobReprintable(self._file_manager,
+                                                   printJobModel.fileOrigin,
+                                                   printJobModel.filePathName,
+                                                   printJobModel.fileName,
+                                                   self._logger)
+
     #######################################################################################   SELECT JOB FOR PRINTING
     @octoprint.plugin.BlueprintPlugin.route("/selectPrintJobForPrint/<int:databaseId>", methods=["PUT"])
     @no_firstrun_access
@@ -405,32 +450,55 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
         if not Permissions.PLUGIN_PRINTJOBHISTORYEXTENDED_EDIT_JOB.can():
             return "Insufficient rights", 403
 
-        printJobModel = self._databaseManager.loadPrintJob(databaseId);
+        printJobModel = self._databaseManager.loadPrintJob(databaseId)
         if (printJobModel == None):
             # PrintJob was deleted
-            message = "PrintJob not in database anymore! Selection not possible."
-            self._logger.error(message)
-            self._sendDataToClient(dict(action="errorPopUp",
-                                        title="Print selection not possible",
-                                        message=message))
-            return flask.jsonify()
+            return self._selectionFailed("PrintJob not in database anymore! Selection not possible.", "missing", 404)
 
-        printJobPrintable = PrintJobUtils.isPrintJobReprintable(self._file_manager,
-                                                                printJobModel.fileOrigin,
-                                                                printJobModel.filePathName,
-                                                                printJobModel.fileName)
-        fullFileLocation = printJobPrintable["fullFileLocation"]
+        try:
+            printJobPrintable = self._resolvePrintJobFile(printJobModel)
+        except Exception as e:
+            self._logger.exception("Could not resolve the file of print job '" + str(databaseId) + "': " + str(e))
+            return self._selectionFailed("Could not work out where this file is: " + str(e), "unresolvable", 409)
+
         if (printJobPrintable["isRePrintable"] == False):
-            message = "PrintJob not found in: " +fullFileLocation
-            self._logger.error(message)
-            self._sendDataToClient(dict(action="errorPopUp",
-                                        title="Print selection not possible",
-                                        message=message))
-            return flask.jsonify()
-        sd = False if (printJobModel.fileOrigin != None and printJobModel.fileOrigin == "local") else True
-        self._printer.select_file(fullFileLocation, sd)
+            reason = printJobPrintable["notReprintableReason"]
+            return self._selectionFailed(self._buildNotSelectableMessage(reason, printJobPrintable["fullFileLocation"]),
+                                         reason, 409)
 
-        return flask.jsonify()
+        # The file is kept by the printer for everything but local storage; since OctoPrint
+        # 2.0 the sd-card and the connectors (Bambu, Klipper) are the same destination.
+        isPrinterHosted = PrintJobUtils.isPrinterHosted(printJobModel.fileOrigin)
+        destination = FileDestinations.PRINTER if isPrinterHosted else FileDestinations.LOCAL
+        # Only ever the storage path. The absolute one is for people to read: OctoPrint 2.0
+        # resolves it against the storage root and would look for it inside itself.
+        storagePath = printJobPrintable["storagePath"]
+        try:
+            job = self._file_manager.create_job(destination, storagePath, owner=current_user.get_name())
+            self._printer.set_job(job)
+        except Exception as e:
+            # A connector that will not take the file, a file that vanished between the check
+            # and here - the user gets told instead of a 500 with nothing in the dialog.
+            self._logger.exception("Could not select '" + str(storagePath) + "' in '" + str(destination) + "': " + str(e))
+            return self._selectionFailed("Could not select this file for printing: " + str(e), "selectFailed", 409)
+
+        return flask.jsonify({"databaseId": databaseId, "storagePath": storagePath})
+
+    def _buildNotSelectableMessage(self, notReprintableReason, fullFileLocation):
+        if (notReprintableReason == "placeholder"):
+            return "This print job has no file path - the printer never reported which file it was printing."
+        if (notReprintableReason == "unresolvable"):
+            return "The storage could not work out where this file is: " + str(fullFileLocation)
+        return "PrintJob not found in: " + str(fullFileLocation)
+
+    # Says no to the browser and tells the user why. The status code matters: the dialog
+    # closes on success and would otherwise throw away unsaved edits on a failed selection.
+    def _selectionFailed(self, message, reason, statusCode):
+        self._logger.error(message)
+        self._sendDataToClient(dict(action="errorPopUp",
+                                    title="Print selection not possible",
+                                    message=message))
+        return flask.jsonify({"error": message, "reason": reason}), statusCode
 
     #######################################################################################   DELETE JOB
     @octoprint.plugin.BlueprintPlugin.route("/removePrintJob/<int:databaseId>", methods=["DELETE"])
