@@ -4,8 +4,9 @@ from __future__ import absolute_import
 
 from octoprint_PrintJobHistoryExtended.CameraManager import CameraManager
 from octoprint_PrintJobHistoryExtended.common import StringUtils
-from octoprint_PrintJobHistoryExtended.common import PrintJobUtils
 
+# fileManager is no longer read here, but stays in the signature: eleven call sites pass
+# it, and churning them all is not worth it inside a bug fix.
 def transformPrintJobModel(job, fileManager, deleteDateTimeFromDict = True):
 	jobAsDict = job.__data__
 
@@ -70,11 +71,9 @@ def transformPrintJobModel(job, fileManager, deleteDateTimeFromDict = True):
 		del jobAsDict["printEndDateTime"]
 		del jobAsDict["created"]
 
-	# not the best approach to check this value here
-	printJobReprintable = PrintJobUtils.isPrintJobReprintable(fileManager, job.fileOrigin, job.filePathName, job.fileName)
-
-	jobAsDict["isRePrintable"] = printJobReprintable["isRePrintable"]
-	jobAsDict["fullFileLocation"] = printJobReprintable["fullFileLocation"]
+	# Whether the file can still be selected for printing is deliberately NOT answered here:
+	# it touches the disk, and this runs for every row of the table. The edit dialog asks for
+	# the one job it shows (see the printJobReprintable route).
 
 	return jobAsDict
 

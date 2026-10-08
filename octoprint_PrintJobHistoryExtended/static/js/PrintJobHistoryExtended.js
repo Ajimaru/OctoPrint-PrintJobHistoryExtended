@@ -232,8 +232,14 @@ $(function() {
 		this.snapshotFilename(updateData.snapshotFilename);
 		this.slicerSettingsAsText(updateData.slicerSettingsAsText)
 		this.technicalLog(updateData.technicalLog)
-        this.isRePrintable(updateData.isRePrintable);
-        this.fullFileLocation(updateData.fullFileLocation);
+        // Both are answered by the edit dialog on its own (the table does not carry them any
+        // more), so only overwrite what was fetched if this update actually brings a value.
+        if (updateData.isRePrintable !== undefined){
+            this.isRePrintable(updateData.isRePrintable);
+        }
+        if (updateData.fullFileLocation !== undefined){
+            this.fullFileLocation(updateData.fullFileLocation);
+        }
     };
 
 
@@ -1121,6 +1127,9 @@ $(function() {
                         } else {
                             self.printJobForEditing(new PrintJobItem(data.printJobItem));
                             self.printJobEditDialog.printJobItemForEdit = self.printJobForEditing();
+                            // the fresh item knows nothing about the file yet, so ask again -
+                            // without this the selection button would stay disabled
+                            self.printJobEditDialog._refreshReprintableState();
                             self.printJobEditDialog._takeChangeSnapshot();
                         }
                     }

@@ -264,14 +264,34 @@ function PrintJobHistoryExtendedAPIClient(pluginId, baseUrl) {
         });
     }
 
+    // is the file of this PrintJob-Item still there to be selected?
+    this.callLoadPrintJobReprintable = function (databaseId, responseHandler, errorHandler){
+        $.ajax({
+            url: this.baseUrl + "plugin/" + this.pluginId + "/printJobReprintable/" + databaseId,
+            type: "GET"
+        }).done(function( data ){
+            responseHandler(data);
+        }).fail(function(){
+            if (errorHandler != undefined){
+                errorHandler()
+            }
+        });
+    }
+
     // select PrintJob-Item for printing
-    this.callSelectPrintJobForPrinting = function (databaseId, responseHandler){
+    // A failed selection answers with an error status, not with 200: the dialog closes on
+    // success, so treating a failure as success would throw away unsaved edits.
+    this.callSelectPrintJobForPrinting = function (databaseId, responseHandler, errorHandler){
         $.ajax({
             //url: API_BASEURL + "plugin/"+PLUGIN_ID+"/loadPrintJobHistory",
             url: this.baseUrl + "plugin/" + this.pluginId + "/selectPrintJobForPrint/" + databaseId,
             type: "PUT"
         }).done(function( data ){
             responseHandler();
+        }).fail(function( jqXHR ){
+            if (errorHandler != undefined){
+                errorHandler(jqXHR != undefined ? jqXHR.responseJSON : undefined)
+            }
         });
     }
 
