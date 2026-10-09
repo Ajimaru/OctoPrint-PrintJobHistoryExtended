@@ -1,0 +1,36 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    groups:
+      dev-dependencies:
+        dependency-type: development
+        patterns:
+          - "*"
+      # Major bumps are deliberately not listed here: they stay individual
+      # PRs, since those are the ones that actually break things.
+      production-dependencies:
+        dependency-type: production
+        patterns:
+          - "*"
+        update-types:
+          - minor
+    # Patch bumps are ignored to keep PR volume low; security fixes still
+    # arrive through Dependabot security alerts, which ignore this filter.
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-patch

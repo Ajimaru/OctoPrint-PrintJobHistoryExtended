@@ -10,6 +10,7 @@ import octoprint.plugin
 from octoprint.access.permissions import Permissions
 from octoprint.events import Events
 from octoprint.filemanager import FileDestinations
+from octoprint.util.version import get_octoprint_version_string, is_octoprint_compatible
 
 import datetime
 import math
@@ -2497,23 +2498,25 @@ class PrintJobHistoryExtendedPlugin(
 				repo="OctoPrint-PrintJobHistoryExtended",
 				current=self._plugin_version,
 
+				# Note the key is "commitish", not "comittish": a misspelled key is silently
+				# ignored, which makes the branch restriction have no effect at all.
 				stable_branch=dict(
 					name="Only Release",
 					branch="main",
-					comittish=["main"]
+					commitish=["main"]
 				),
 				prerelease_branches=[
-					# dict(
-					# 	name="Release & Candidate",
-					# 	branch="pre-release",
-					# 	comittish=["pre-release", "main"],
-					# ),
 					dict(
-						name="Release & in development",
-						branch="dev",
-						comittish=["dev", "main"],
+						name="Release & Pre-Release",
+						branch="main",
+						commitish=["main"],
 					)
 				],
+
+				# force_base is deliberately NOT set: it would compare only the base version
+				# ("2.0.0a1" -> "2.0.0"), so neither 2.0.0a2 nor the final 2.0.0 would ever be
+				# offered as an update. OctoPrint defaults it to False, which compares the full
+				# PEP 440 version and orders a1 < a2 < 2.0.0 correctly.
 
 				# update method: pip
 				pip="https://github.com/Ajimaru/OctoPrint-PrintJobHistoryExtended/releases/download/{target_version}/main.zip"
@@ -3031,8 +3034,28 @@ class PrintJobHistoryExtendedPlugin(
 # ("OctoPrint-PluginSkeleton"), you may define that here. Same goes for the other metadata derived from setup.py that
 # can be overwritten via __plugin_xyz__ control properties. See the documentation for that.
 # Name is used in the left Settings-Menue
-__plugin_name__ = "PrintJobHistoryExtended"
+__plugin_name__ = "Print Job History Extended"
 __plugin_pythoncompat__ = ">=3.11,<3.15"
+
+# setup.py's OctoPrint requirement only guards pip. A plugin folder carried over from a 1.x
+# install bypasses it entirely and would fail later in confusing ways instead:
+# __plugin_check__ is called before the plugin is loaded and refuses the load when it
+# returns False. Note ">=2.0.0" already accepts the 2.0.0 release candidates.
+OCTOPRINT_COMPAT = ">=2.0.0"
+
+
+def __plugin_check__():
+	if is_octoprint_compatible(OCTOPRINT_COMPAT):
+		return True
+
+	logging.getLogger("octoprint.plugins." + __name__).error(
+		"Print Job History Extended requires OctoPrint %s, but this is OctoPrint %s. "
+		"The plugin will not be loaded. Please update OctoPrint.",
+		OCTOPRINT_COMPAT,
+		get_octoprint_version_string(),
+	)
+	return False
+
 
 def __plugin_load__():
 	global __plugin_implementation__
