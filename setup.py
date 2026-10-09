@@ -14,14 +14,14 @@ plugin_package = "octoprint_PrintJobHistoryExtended"
 plugin_name = "Print Job History Extended"
 
 # The plugin's version. Can be overwritten within OctoPrint's internal data via __plugin_version__ in the plugin module
-plugin_version = "1.18.0.dev59"
+plugin_version = "2.0.0a1"
 
 # The plugin's description. Can be overwritten within OctoPrint's internal data via __plugin_description__ in the plugin
 # module
 plugin_description = """Collects all print jobs and stores the job data into a database"""
 
 # The plugin's author. Can be overwritten within OctoPrint's internal data via __plugin_author__ in the plugin module
-plugin_author = "Ajimaru, based on work of OllisGit and others"
+plugin_author = "Ajimaru, based on work of OllisGit and vojtakaniok"
 
 # The plugin's author's mail address.
 plugin_author_email = "ajimaru_gdr@pm.me"

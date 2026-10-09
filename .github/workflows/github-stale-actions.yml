@@ -7,6 +7,12 @@ on:
     # Each day at 1:30am run the action
     - cron: '30 1 * * *'
 
+# The workflow only marks and closes issues; it never writes to the repository
+# contents and never touches pull requests.
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   stale:
     runs-on: ubuntu-latest
@@ -15,8 +21,8 @@ jobs:
         with:
           exempt-issue-labels: 'status: analysing,status: inNextRelease,status: inProgress,status: wontfix'
 
-          days-before-issue-stale: 30
-          stale-issue-message: 'This issue has been automatically marked for closing, because it has not had activity in 30 days. It will be closed if no further activity occurs in 10 days.'
+          days-before-issue-stale: 90
+          stale-issue-message: 'This issue has been automatically marked for closing, because it has not had activity in 90 days. It will be closed if no further activity occurs in 10 days.'
           stale-issue-label:  'status: markedForAutoClose'
 
           days-before-issue-close: 10

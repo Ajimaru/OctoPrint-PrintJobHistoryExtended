@@ -1,0 +1,68 @@
+name: Tag pushed - prepare release
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+' # note that these are glob patterns, not regex
+
+jobs:
+  # A single job on purpose - more would spin up more runners for no gain.
+  PrepareRelease:
+    runs-on: ubuntu-latest
+
+    # Creating the release and uploading its asset needs write access to contents;
+    # the repository default for the workflow token is read-only.
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so --generate-notes can diff against the previous tag
+
+      - name: Check current version against tag
+        env:
+          TAG_ID: ${{ github.ref_name }}
+        run: |
+          PLUGIN_VERSION=$(grep '^plugin_version' setup.py | cut -d '"' -f2)
+          echo "Plugin version in code: $PLUGIN_VERSION"
+          echo "Pushed tag:             $TAG_ID"
+          if [ "$PLUGIN_VERSION" != "$TAG_ID" ]; then
+            echo "::error::plugin_version in setup.py does not match the pushed tag"
+            exit 1
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      # The suite runs in a few seconds and catches a tag pushed from a broken tree.
+      # OctoPrint itself is required: the plugin module imports octoprint.plugin at
+      # import time, so the tests cannot collect without it.
+      - name: Run tests
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --pre "OctoPrint==2.0.0rc5" pytest peewee pillow
+          python -m pytest octoprint_PrintJobHistoryExtended/test -q
+
+      # -i whitelists what goes in, -x drops the test suite and its gcode fixtures:
+      # those are ~3.5 MB of the artifact and of no use to an end user.
+      # THIRD_PARTY_NOTICES.md and 3rdPartySoftware/ are a license obligation and must stay.
+      - name: Build ZIP archive
+        run: |
+          zip -r main.zip * \
+            -i '\octoprint_*' 'README.md' 'requirements.txt' 'setup.py' 'LICENSE.txt' \
+               'THIRD_PARTY_NOTICES.md' '3rdPartySoftware/*' \
+            -x 'octoprint_*/test/*' '*__pycache__*' '*.pyc'
+
+      - name: List the archive contents for debugging
+        run: unzip -l main.zip
+
+      - name: Create release draft
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          VERSIONTAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$VERSIONTAG" --generate-notes --draft --verify-tag --title "Version $VERSIONTAG (draft)"
+          gh release upload "$VERSIONTAG" main.zip
