@@ -39,7 +39,7 @@ function PrintJobHistoryExtendedPluginMessageConfirmDialog(){
 
         //
         var dialogMessage = "<h1>" + messageConfirmData.title + "</h1>" +
-                            "<span>" + messageConfirmData.data + "</span>";
+                            "<span>" + messageConfirmData.message + "</span>";
 
         self.confirmMessageExtended.html(dialogMessage);
 
