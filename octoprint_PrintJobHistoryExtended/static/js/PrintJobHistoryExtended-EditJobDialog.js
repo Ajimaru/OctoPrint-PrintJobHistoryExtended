@@ -55,6 +55,9 @@ function PrintJobHistoryExtendedEditDialog(){
     // Without asking for it first the call comes back 403 "Please reauthenticate with your
     // credentials", which the capture only reported as "Something went wrong".
     self.loginState = null;
+    // Supplied by the owning view model, which is the side that knows the permission
+    // names. Defaults to denying, so a caller that forgets it cannot leak a request.
+    self.canEdit = function(){ return false; };
 
     // The current webcam settings, or null while the settings have not been loaded yet.
     // Read fresh every time instead of caching: the settings view model replaces its
@@ -71,6 +74,28 @@ function PrintJobHistoryExtendedEditDialog(){
         return webCamSettings;
     }
     self._webCamSettings = _webCamSettings;
+
+    // The templates must not reach into webCamSettings directly: OctoPrint withholds the
+    // webcam settings from a user without SETTINGS, so the object stays null for them and
+    // every such binding throws. Knockout then abandons the rest of that subtree without
+    // an error on the console - which took out the whole modal footer, leaving a read-only
+    // user with a visible Save button and a Close button that did nothing.
+    self.webCamStreamUrl = function(){
+        var settings = _webCamSettings();
+        return settings == null ? "" : settings.streamUrl();
+    };
+    self.webCamRotate90 = function(){
+        var settings = _webCamSettings();
+        return settings == null ? false : settings.rotate90() === true;
+    };
+    self.webCamFlipH = function(){
+        var settings = _webCamSettings();
+        return settings == null ? false : settings.flipH() === true;
+    };
+    self.webCamFlipV = function(){
+        var settings = _webCamSettings();
+        return settings == null ? false : settings.flipV() === true;
+    };
 
     // Run the callback, asking the user for their password first if the login session is
     // too old for the endpoints that insist on a recent one. Falls back to calling straight
@@ -128,13 +153,16 @@ function PrintJobHistoryExtendedEditDialog(){
 
     /////////////////////////////////////////////////////////////////////////////////////////////////// INIT
 
-    this.init = function(apiClient, settingsViewModel, loginState){
+    this.init = function(apiClient, settingsViewModel, loginState, canEdit){
         self.apiClient = apiClient;
 
         // keep the view model, not settings.webcam: that object does not exist yet when
         // the settings have not been received, and is only filled in later
         self.settingsViewModel = settingsViewModel;
         self.loginState = loginState;
+        if (typeof canEdit === "function"){
+            self.canEdit = canEdit;
+        }
         self.webCamSettings = null;
 
         self.editPrintJobItemDialog = $("#dialog_printJobHistoryExtended_editPrintJobItem");
@@ -549,6 +577,17 @@ function PrintJobHistoryExtendedEditDialog(){
         var databaseId = self.printJobItemForEdit.databaseId();
         // the button is hidden without a databaseId (a new or cloned job), nothing to ask about
         if (databaseId == null || databaseId == ""){
+            self.selectionCheckState("done");
+            self.notReprintableReason(null);
+            self.printJobItemForEdit.isRePrintable(false);
+            self.printJobItemForEdit.isRePrintable.valueHasMutated();
+            return;
+        }
+
+        // Selecting a job for printing needs EDIT_JOB, and so does the route that answers
+        // this. Without that permission the button is hidden anyway, so asking would only
+        // hit the disk server-side and return a 403.
+        if (self.canEdit() == false){
             self.selectionCheckState("done");
             self.notReprintableReason(null);
             self.printJobItemForEdit.isRePrintable(false);

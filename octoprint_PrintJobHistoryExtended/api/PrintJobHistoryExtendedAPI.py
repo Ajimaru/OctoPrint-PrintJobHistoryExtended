@@ -321,11 +321,29 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
 
 ################################################### APIs
 
+    def _canViewHistory(self):
+        """Whether the current user may read the history.
+
+        A permission in OctoPrint is satisfied only by an identity carrying every need it
+        declares, and there is no "implies" relation between permissions: a VIEW that also
+        listed the write role would AND the two, satisfying neither holder on its own. So
+        the read routes ask for VIEW or for one of the write permissions, which is what
+        keeps an EDIT_JOB/DELETE_JOB holder able to read the table even if an admin takes
+        VIEW away from their group.
+        """
+        return (Permissions.PLUGIN_PRINTJOBHISTORYEXTENDED_VIEW.can()
+                or Permissions.PLUGIN_PRINTJOBHISTORYEXTENDED_EDIT_JOB.can()
+                or Permissions.PLUGIN_PRINTJOBHISTORYEXTENDED_DELETE_JOB.can())
+
+
 
     #######################################################################################   CONFIRM MESSAGE
     @octoprint.plugin.BlueprintPlugin.route("/confirmMessageDialog", methods=["PUT"])
     @no_firstrun_access
     def put_confirmMessageDialog(self):
+        if not self._canViewHistory():
+            return "Insufficient rights", 403
+
         self._settings.set([SettingsKeys.SETTINGS_KEY_MESSAGE_CONFIRM_DATA], None)
         self._settings.save()
 
@@ -347,6 +365,9 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
     @no_firstrun_access
     def get_statisticByQuery(self):
 
+        if not self._canViewHistory():
+            return "Insufficient rights", 403
+
         tableQuery = flask.request.values
         statistic = self._databaseManager.calculatePrintJobsStatisticByQuery(tableQuery)
 
@@ -356,6 +377,9 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
     @octoprint.plugin.BlueprintPlugin.route("/compareSlicerSettings/", methods=["GET"])
     @no_firstrun_access
     def get_compareSlicerSettings(self):
+
+        if not self._canViewHistory():
+            return "Insufficient rights", 403
 
         if "databaseIds" in flask.request.values:
             selectedDatabaseIds = flask.request.values["databaseIds"]
@@ -386,6 +410,9 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
     @octoprint.plugin.BlueprintPlugin.route("/loadPrintJobHistoryByQuery", methods=["GET"])
     @no_firstrun_access
     def get_printjobhistoryextendedByQuery(self):
+
+        if not self._canViewHistory():
+            return "Insufficient rights", 403
 
         tableQuery = flask.request.values
         allJobsModels = self._databaseManager.loadPrintJobsByQuery(tableQuery)
@@ -600,6 +627,9 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
     @no_firstrun_access
     def put_forceCloseEditDialog(self):
 
+        if not Permissions.PLUGIN_PRINTJOBHISTORYEXTENDED_EDIT_JOB.can():
+            return "Insufficient rights", 403
+
         # Inform all Browser to close the EditDialog
         self._sendDataToClient(dict(action="closeEditDialog"))
 
@@ -609,6 +639,9 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
     @octoprint.plugin.BlueprintPlugin.route("/printJobSnapshot/<string:snapshotFilename>", methods=["GET"])
     @no_firstrun_access
     def get_snapshot(self, snapshotFilename):
+        if not self._canViewHistory():
+            return "Insufficient rights", 403
+
         absoluteFilename = self._cameraManager.buildSnapshotFilenameLocation(snapshotFilename)
         return send_file(absoluteFilename, mimetype='image/png', max_age=86400)
 
@@ -808,6 +841,9 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
     @octoprint.plugin.BlueprintPlugin.route("/loadKnownInstances", methods=["GET"])
     @no_firstrun_access
     def get_known_instances(self):
+        if not self._canViewHistory():
+            return "Insufficient rights", 403
+
         return flask.jsonify({
             "instanceNames": self._databaseManager.loadKnownInstanceNames(),
             "currentInstanceName": self._databaseManager.getInstanceName()
@@ -844,6 +880,9 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
     @no_firstrun_access
     def get_exportPrintJobHistoryData(self, exportType):
 
+        if not self._canViewHistory():
+            return "Insufficient rights", 403
+
         if exportType == "CSV":
             if "databaseIds" in flask.request.values:
                 selectedDatabaseIds = flask.request.values["databaseIds"]
@@ -878,6 +917,9 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
     @octoprint.plugin.BlueprintPlugin.route("/sampleCSV", methods=["GET"])
     @no_firstrun_access
     def get_sampleCSV(self):
+
+        if not Permissions.SETTINGS.can():
+            return "Insufficient rights", 403
 
         allJobsModels = list()
 
@@ -1088,6 +1130,9 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
     @no_firstrun_access
     def get_createSinglePrintJobReport(self, databaseId):
 
+        if not self._canViewHistory():
+            return "Insufficient rights", 403
+
         if (databaseId == "sample"):
             printJobModel = self._createSamplePrintModel()
         else:
@@ -1127,6 +1172,9 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
     @octoprint.plugin.BlueprintPlugin.route("/multiPrintJobReport", methods=["GET"])
     @no_firstrun_access
     def get_createMultiPrintJobReport(self):
+
+        if not self._canViewHistory():
+            return "Insufficient rights", 403
 
         tableQuery = flask.request.values.to_dict()
         allPrintJobModels = []
@@ -1237,6 +1285,9 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
         :param reportType: single or multi
         :return:
         '''
+        if not Permissions.SETTINGS.can():
+            return "Insufficient rights", 403
+
         reportHtmlTemplate = self._loadPrintJobReportTemplateContent(reportType)
         # send rendered report to browser
         return Response(
@@ -1325,6 +1376,9 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
     @octoprint.plugin.BlueprintPlugin.route("/legacyMigrationStatus", methods=["GET"])
     @no_firstrun_access
     def get_legacyMigrationStatus(self):
+        if not Permissions.SETTINGS.can():
+            return "Insufficient rights", 403
+
         legacyDataFolder = self._getLegacyDataFolder()
         return flask.jsonify(
             available=self._isLegacyMigrationAvailable(),
@@ -1341,6 +1395,9 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
     @octoprint.plugin.BlueprintPlugin.route("/legacyDatabasePreview", methods=["GET"])
     @no_firstrun_access
     def get_legacyDatabasePreview(self):
+        if not Permissions.SETTINGS.can():
+            return "Insufficient rights", 403
+
         legacyDataFolder = self._getLegacyDataFolder()
         if legacyDataFolder is None:
             return flask.jsonify(readable=False, jobCount=0, jobs=[], moreJobs=0)
@@ -1351,6 +1408,9 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
     @octoprint.plugin.BlueprintPlugin.route("/legacySettingsComparison", methods=["GET"])
     @no_firstrun_access
     def get_legacySettingsComparison(self):
+        if not Permissions.SETTINGS.can():
+            return "Insufficient rights", 403
+
         return flask.jsonify(settings=self._getLegacySettingsComparison())
 
 

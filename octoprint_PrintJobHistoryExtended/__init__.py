@@ -2089,6 +2089,23 @@ class PrintJobHistoryExtendedPlugin(
 		from octoprint.access import USER_GROUP
 		return [
 			{
+				"key": "VIEW",
+				"name": "View print job history",
+				"description": "Allows to read the print job history, its statistics, "
+				               "snapshots, reports and CSV exports",
+				"default_groups": [ADMIN_GROUP, USER_GROUP],
+				# Exactly one role. OctoPrint's allows() demands *every* need a permission
+				# carries, so listing a second role would AND the two together: verified on the
+				# running instance, a holder of either role alone then satisfies neither. That
+				# also rules out expressing "EDIT implies VIEW" through roles or a "permissions"
+				# key - it would only widen EDIT_JOB's own need set. The read routes therefore
+				# accept VIEW *or* a write permission, see _canViewHistory in the API mixin.
+				"roles": ["view_job"],
+				# Deliberately not dangerous. OctoPrint strips dangerous permissions from the
+				# guests group, which would block the read-only sharing this permission exists
+				# for (OllisGit #220).
+			},
+			{
 				"key": "DELETE_JOB",
 				"name": "Delete print jobs",
 				"description": "Allows to delete print jobs from history",
@@ -2404,6 +2421,12 @@ class PrintJobHistoryExtendedPlugin(
 	##~~ TemplatePlugin mixin
 	def get_template_configs(self):
 		return [
+			# No data_bind on the tab config. OctoPrint merges it into the same data-bind as
+			# allowBindings on the tab's outer div, and that pair decides whether knockout
+			# descends into the subtree at all - adding "visible" there left the dialogs in
+			# modal-dialogs-printJobHistoryExtended unbound, so every permission binding and
+			# every click handler inside them silently stopped working (ko.dataFor returned
+			# null). The tab gates itself from inside its own template instead.
 			dict(type="tab", name="Print Job History Extended"),
 			dict(type="settings", custom_bindings=True, name="Print Job History Extended")
 		]

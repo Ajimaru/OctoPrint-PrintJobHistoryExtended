@@ -1,5 +1,9 @@
 {% include "PrintJobHistoryExtended_tab_dialogs.jinja2" %}
-<div id="tab_printJobHistoryExtended">
+<!-- Gated here rather than through the tab config's data_bind: that one is merged with
+     allowBindings on the outer tab div, where it stops knockout binding the subtree and
+     silently disables every binding in the dialogs above. -->
+<div id="tab_printJobHistoryExtended"
+     data-bind="visible: loginStateViewModel.hasAnyPermission(accessViewModel.permissions.PLUGIN_PRINTJOBHISTORYEXTENDED_VIEW, accessViewModel.permissions.PLUGIN_PRINTJOBHISTORYEXTENDED_EDIT_JOB, accessViewModel.permissions.PLUGIN_PRINTJOBHISTORYEXTENDED_DELETE_JOB)">
 
     <div class="row-fluid">
         <div class="span5">
@@ -13,18 +17,18 @@
                 <a href="#" data-bind="click: addNewPrintJobItem" title="Force refresh" ><span class="fa fa-plus"></span> Add Printjob</a>
             </div>
 
-            <div>
+            <div data-bind="visible: loginStateViewModel.hasAnyPermission(accessViewModel.permissions.PLUGIN_PRINTJOBHISTORYEXTENDED_VIEW, accessViewModel.permissions.PLUGIN_PRINTJOBHISTORYEXTENDED_EDIT_JOB, accessViewModel.permissions.PLUGIN_PRINTJOBHISTORYEXTENDED_DELETE_JOB)">
                 <a href="#" data-bind="click: showStatisticDialog" title="Force refresh" ><span class="icon-bar-chart"></span> Statistic</a>
             </div>
 
-            <div>
+            <div data-bind="visible: loginStateViewModel.hasAnyPermission(accessViewModel.permissions.PLUGIN_PRINTJOBHISTORYEXTENDED_VIEW, accessViewModel.permissions.PLUGIN_PRINTJOBHISTORYEXTENDED_EDIT_JOB, accessViewModel.permissions.PLUGIN_PRINTJOBHISTORYEXTENDED_DELETE_JOB)">
                 <a href="#" data-bind="attr: {href: $root.exportUrl('CSV'), css: {disabled: !$root.exportUrl('CSV')}}"> <i class="icon-reorder"></i> CSV Export</a>
                 <span data-bind="visible: printJobHistoryExtendedTableHelper.selectedTableItems().length > 0">| <a href="#" data-bind="attr: {href: $root.exportedSelectedURL, css: {disabled: !$root.exportUrl('CSV')}}"> only selected (<span data-bind="text: printJobHistoryExtendedTableHelper.selectedTableItems().length"></span>)</a> </span>
             </div>
 
 
 
-            <div>
+            <div data-bind="visible: loginStateViewModel.hasAnyPermission(accessViewModel.permissions.PLUGIN_PRINTJOBHISTORYEXTENDED_VIEW, accessViewModel.permissions.PLUGIN_PRINTJOBHISTORYEXTENDED_EDIT_JOB, accessViewModel.permissions.PLUGIN_PRINTJOBHISTORYEXTENDED_DELETE_JOB)">
                 <a href="#" target="_blank" data-bind="attr: {href: $root.reportMultiPrintJobItem('all')}"> <i class="icon-print"></i> Report</a>
                 <span data-bind="visible: printJobHistoryExtendedTableHelper.selectedTableItems().length > 0">| <a href="#" target="_blank" data-bind="attr: {href: $root.reportMultiPrintJobItem()}"> only selected (<span data-bind="text: printJobHistoryExtendedTableHelper.selectedTableItems().length"></span>)</a> </span>
             </div>
@@ -33,7 +37,7 @@
 
 
 
-            <div>
+            <div data-bind="visible: loginStateViewModel.hasAnyPermission(accessViewModel.permissions.PLUGIN_PRINTJOBHISTORYEXTENDED_VIEW, accessViewModel.permissions.PLUGIN_PRINTJOBHISTORYEXTENDED_EDIT_JOB, accessViewModel.permissions.PLUGIN_PRINTJOBHISTORYEXTENDED_DELETE_JOB)">
                 <a href="#" data-bind="click:compareSelectedPrintJobs"> <i class="icon-columns"></i> Compare selected (<span data-bind="text: printJobHistoryExtendedTableHelper.selectedTableItems().length">100</span>)</a>
             </div>
             <div data-bind="visible: loginStateViewModel.hasPermission(accessViewModel.permissions.PLUGIN_PRINTJOBHISTORYEXTENDED_DELETE_JOB)">
