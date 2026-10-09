@@ -379,6 +379,37 @@ $(function() {
         self.settingsViewModel = parameters[1];
         self.accessViewModel = parameters[2];
 
+        // One place to ask what the current user may do. Every guarded call below goes
+        // through these, so a route whose permission changes server-side has a single
+        // counterpart here. Without them a read-only user collects a 403 per loader on
+        // every page load, in the very tab this permission exists to open up.
+        var permissionOf = function(name){
+            return self.accessViewModel != null && self.accessViewModel.permissions != null
+                   ? self.accessViewModel.permissions[name]
+                   : undefined;
+        };
+        var hasPermission = function(name){
+            var permission = permissionOf(name);
+            // An unknown permission means the plugin's hook has not been processed yet;
+            // treat it as denied rather than firing a request that will 403.
+            return permission !== undefined
+                   && self.loginState.hasPermission(permission) === true;
+        };
+        // Mirrors _canViewHistory server-side: OctoPrint has no implication between
+        // permissions, so a holder of a write permission would otherwise be refused the
+        // table here while the API hands it over.
+        self.canView = function(){
+            return hasPermission("PLUGIN_PRINTJOBHISTORYEXTENDED_VIEW")
+                   || hasPermission("PLUGIN_PRINTJOBHISTORYEXTENDED_EDIT_JOB")
+                   || hasPermission("PLUGIN_PRINTJOBHISTORYEXTENDED_DELETE_JOB");
+        };
+        self.canEdit = function(){
+            return hasPermission("PLUGIN_PRINTJOBHISTORYEXTENDED_EDIT_JOB");
+        };
+        self.canChangeSettings = function(){
+            return hasPermission("SETTINGS");
+        };
+
         self.pluginSettings = null;
 
         self.apiClient = new PrintJobHistoryExtendedAPIClient(PLUGIN_ID, BASEURL);
@@ -991,14 +1022,14 @@ $(function() {
             // the view model, not settings.webcam: that is still undefined here when the
             // first settings response has not arrived yet.
             // loginState is needed because /api/util/test demands a recent password entry.
-            self.printJobEditDialog.init(self.apiClient, self.settingsViewModel, self.loginState);
+            self.printJobEditDialog.init(self.apiClient, self.settingsViewModel, self.loginState, self.canEdit);
             self.pluginCheckDialog.init(self.apiClient, self.pluginSettings);
             self.messageConfirmDialog.init(self.apiClient, self.pluginSettings);
             self.csvImportDialog.init(self.apiClient);
             self.statisticDialog.init(self.apiClient);
             self.compareSlicerSettingsDialog.init(self.apiClient, self.busyIndicatorActive);
             self.legacyMigration.init(PLUGIN_ID);
-            self.legacyMigration.loadStatus();
+            // its status is loaded from loadWhatThisUserMaySee, once the permissions are known
 
             // load browser stored settings
             loadSettingsFromBrowserStore();
@@ -1009,12 +1040,35 @@ $(function() {
              });
         }
 
+        // loginState.userneeds is filled from an asynchronous response, and hasPermission
+        // answers false while it is still undefined. Binding therefore runs before the
+        // permissions are known, so everything permission-dependent is loaded from here and
+        // this runs again once they arrive - otherwise the first, premature answer would
+        // stand and the table would stay empty even for an admin.
+        var loadWhatThisUserMaySee = function(){
+            if (self.canChangeSettings()){
+                self.downloadDatabaseUrl(self.apiClient.getDownloadDatabaseUrl());
+                self.loadDatabaseMetaData();
+                self.legacyMigration.loadStatus();
+            }
+            if (self.canView()){
+                // loadKnownInstances resolves the instance filter and releases the table's
+                // held initial load in its callback, so it is what starts the table. Calling
+                // reloadItems here instead would hit the hold and do nothing.
+                self.loadKnownInstances();
+            }
+        }
+
+        // OctoPrint calls this whenever the current user's needs change, which includes the
+        // moment they first arrive. The core view models (files, connection) hook it for the
+        // same reason.
+        self.onUserPermissionsChanged = function() {
+            loadWhatThisUserMaySee();
+        }
+
         self.onAfterBinding = function() {
             // all inits were done
-            self.downloadDatabaseUrl(self.apiClient.getDownloadDatabaseUrl());
-
-            self.loadDatabaseMetaData();
-            self.loadKnownInstances();
+            loadWhatThisUserMaySee();
 
             // to bring up dialogs the binding must be already done
             if (self.printJobToShowAfterStartup != null){
@@ -1034,6 +1088,7 @@ $(function() {
 
         self.onUserLoggedIn = function(currentUser) {
             self.printJobEditDialog.setCurrentUser(currentUser);
+            loadWhatThisUserMaySee();
         }
 
         self.onUserLoggedOut = function() {
@@ -1307,6 +1362,15 @@ $(function() {
 
 
         var loadJobFunction = function(tableQuery, observableTableModel, observableTotalItemCount, observableCurrentItemCount){
+            // Every reloadItems() of the table helper lands here, so this is the one place
+            // that has to hold back the query for a user without read permission. Present
+            // an empty table instead of a 403 in the console.
+            if (self.canView() == false){
+                observableTotalItemCount(0);
+                observableCurrentItemCount(0);
+                observableTableModel([]);
+                return;
+            }
             // api-call
             self.apiClient.callLoadPrintJobsByQuery(tableQuery, function(responseData){
                 // handle response

@@ -487,17 +487,17 @@
                                                     <p><strong>Webcam stream not loaded</strong></p>
                                     <!--                <p data-bind="visible: !loginState.isAdmin()"><small>{{ _('It might not be configured correctly or require authentication. To have this fixed, get in touch with an administrator of this OctoPrint instance.') }}</small></p>-->
                                     <!--                <p data-bind="visible: loginState.isAdmin"><small>{{ _('It might not be configured correctly or require authentication. You can change the URL of the stream under "Settings" > "Webcam & Timelapse" > "Webcam" > "Stream URL". If you don\'t have a webcam you can also just disable webcam support there.') }}</small></p>-->
-                                                    <p><small>Currently configured stream URL: <a target="_blank" rel="noreferrer" data-bind="attr: {href: printJobEditDialog.webCamSettings.streamUrl}, text: printJobEditDialog.webCamSettings.streamUrl"></a></small></p>
+                                                    <p><small>Currently configured stream URL: <a target="_blank" rel="noreferrer" data-bind="attr: {href: printJobEditDialog.webCamStreamUrl()}, text: printJobEditDialog.webCamStreamUrl()"></a></small></p>
                                                 </div>
                                             </div>
                                             <!--  END WEBCAM LOADER   -->
-                                            <div id="printjobhistoryextended_webcam_rotator" data-bind="visible: printJobEditDialog.imageDisplayMode()!='videoStreamLoading' && printJobEditDialog.imageDisplayMode()!='videoStreamError', css: { webcam_rotated: printJobEditDialog.webCamSettings.rotate90(), webcam_unrotated: !printJobEditDialog.webCamSettings.rotate90() }">
+                                            <div id="printjobhistoryextended_webcam_rotator" data-bind="visible: printJobEditDialog.imageDisplayMode()!='videoStreamLoading' && printJobEditDialog.imageDisplayMode()!='videoStreamError', css: { webcam_rotated: printJobEditDialog.webCamRotate90(), webcam_unrotated: !printJobEditDialog.webCamRotate90() }">
                                                 <div class="webcam_fixed_ratio" data-bind="css: printJobEditDialog.webcamRatioClass">
                                                     <div class="webcam_fixed_ratio_inner">
                                                     <!--
                                                     event: { load: onWebcamLoaded, error: onWebcamErrored }, visible: !webcamError()
                                                     -->
-                                                    <img id="printJobHistoryExtended-videoStream" data-bind="css: { flipH: printJobEditDialog.webCamSettings.flipH(), flipV: printJobEditDialog.webCamSettings.flipV() }"  >
+                                                    <img id="printJobHistoryExtended-videoStream" data-bind="css: { flipH: printJobEditDialog.webCamFlipH(), flipV: printJobEditDialog.webCamFlipV() }"  >
                                                     <img id="printJobHistoryExtended-snapshotImage-shutter"
                                                          data-bind="visible: printJobEditDialog.imageDisplayMode()=='videoStreamWithShutter'"
                                                          style="position:absolute;top:0px;left:0px"
@@ -543,15 +543,22 @@
                                                                                     click: printJobEditDialog.deletePrintJobItem" >Delete</button>
                         </span>
 
-                        <button type="button" class="btn btn-inverse"  data-bind="
-                                                                                  visible:printJobForEditing().databaseId,
-                                                                                  click: printJobEditDialog.reportPrintJobItem">Report</button>
+                        <span data-bind="visible: loginStateViewModel.hasAnyPermission(accessViewModel.permissions.PLUGIN_PRINTJOBHISTORYEXTENDED_VIEW, accessViewModel.permissions.PLUGIN_PRINTJOBHISTORYEXTENDED_EDIT_JOB, accessViewModel.permissions.PLUGIN_PRINTJOBHISTORYEXTENDED_DELETE_JOB)">
+                            <button type="button" class="btn btn-inverse"  data-bind="
+                                                                                      visible:printJobForEditing().databaseId,
+                                                                                      click: printJobEditDialog.reportPrintJobItem">Report</button>
+                        </span>
 
-                        <button type="button" class="btn btn-warning" data-bind="
-                                                                                 visible:printJobForEditing().databaseId,
-                                                                                 attr: {title: printJobEditDialog.tooltipForSelection},
-                                                                                 enable: printJobForEditing().isRePrintable(),
-                                                                                 click: printJobEditDialog.selectForPrinting" >Select for printing</button>
+                        <!-- Acting on this needs EDIT_JOB, and so does the route behind it.
+                             Unwrapped it stayed visible and enabled for a read-only user and
+                             answered with a 403. -->
+                        <span data-bind="visible: loginStateViewModel.hasPermission(accessViewModel.permissions.PLUGIN_PRINTJOBHISTORYEXTENDED_EDIT_JOB)">
+                            <button type="button" class="btn btn-warning" data-bind="
+                                                                                     visible:printJobForEditing().databaseId,
+                                                                                     attr: {title: printJobEditDialog.tooltipForSelection},
+                                                                                     enable: printJobForEditing().isRePrintable(),
+                                                                                     click: printJobEditDialog.selectForPrinting" >Select for printing</button>
+                        </span>
 
 
                     </span>
