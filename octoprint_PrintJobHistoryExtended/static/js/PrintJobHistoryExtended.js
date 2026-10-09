@@ -453,7 +453,7 @@ $(function() {
 
         self.printJobToShowAfterStartup = null;
         self.missingPluginDialogMessage = null;
-        self.confirmMessageExtendedDialogData = null;
+        self.messageConfirmDialogData = null;
 
         //self.tableAttributeVisibility = ko.observable();
         self.tableAttributeVisibility = new TableAttributeVisibility();
@@ -1078,9 +1078,9 @@ $(function() {
                 self.pluginCheckDialog.showMissingPluginsDialog(self.missingPluginDialogMessage);
                 self.missingPluginDialogMessage = null;
             }
-            if (self.confirmMessageExtendedDialogData != null){
-                self.confirmMessageExtendedDialog.showDialog(self.confirmMessageExtendedDialogData);
-                self.confirmMessageExtendedDialogData = null;
+            if (self.messageConfirmDialogData != null){
+                self.messageConfirmDialog.showDialog(self.messageConfirmDialogData);
+                self.messageConfirmDialogData = null;
             }
 
 
@@ -1141,11 +1141,11 @@ $(function() {
 
             if ("showMessageConfirmDialog" == data.action){
                 // NOT POSSIBLE, because init not done
-                if (self.confirmMessageExtendedDialog != null && self.confirmMessageExtendedDialog.isInitialized()){
-                    self.confirmMessageExtendedDialog.showDialog(data.confirmMessageExtendedData);
+                if (self.messageConfirmDialog != null && self.messageConfirmDialog.isInitialized()){
+                    self.messageConfirmDialog.showDialog(data.confirmMessageData);
                 } else {
                     // save message for later use, because binding is also not finished, but we received a message from backend
-                    self.confirmMessageExtendedDialogData = data.confirmMessageExtendedData;
+                    self.messageConfirmDialogData = data.confirmMessageData;
                 }
                 return;
             }

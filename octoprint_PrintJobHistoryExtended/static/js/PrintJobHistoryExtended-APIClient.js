@@ -293,7 +293,7 @@ function PrintJobHistoryExtendedAPIClient(pluginId, baseUrl) {
     // confirm the message dialog
     this.callConfirmMessageDialog =  function (){
         $.ajax({
-            url: this.baseUrl + "plugin/"+ this.pluginId +"/confirmMessageExtendedDialog",
+            url: this.baseUrl + "plugin/"+ this.pluginId +"/confirmMessageDialog",
             type: "PUT"
         }).done(function( data ){
             //responseHandler(data)

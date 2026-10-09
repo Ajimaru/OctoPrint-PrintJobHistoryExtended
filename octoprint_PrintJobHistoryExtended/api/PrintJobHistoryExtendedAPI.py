@@ -1346,7 +1346,7 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
     ################################################################################ PRINTJOB - RESET REPORT Template
     @octoprint.plugin.BlueprintPlugin.route("/resetPrintJobReportTemplate/<reportType>", methods=["PUT"])
     @no_firstrun_access
-    def put_confirmMessageDialog(self, reportType):
+    def put_resetPrintJobReportTemplate(self, reportType):
         if not Permissions.SETTINGS.can():
             return "Insufficient rights", 403
         defaultReportTemplateName = ""

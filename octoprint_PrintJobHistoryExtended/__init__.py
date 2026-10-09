@@ -2187,9 +2187,12 @@ class PrintJobHistoryExtendedPlugin(
 					except DoesNotExist as e:
 						self._settings.remove([SettingsKeys.SETTINGS_KEY_SHOW_PRINTJOB_DIALOG_AFTER_PRINT_JOB_ID])
 
+			# The setting holds the dict built by _sendMessageConfirmToClient, so it is indexed,
+			# not attribute-accessed. Nothing writes this setting yet; the pending-message path
+			# is here for a producer that stores a message to be confirmed after a restart.
 			messageConfirmData = self._settings.get([SettingsKeys.SETTINGS_KEY_MESSAGE_CONFIRM_DATA])
 			if (messageConfirmData != None):
-				self._sendMessageConfirmToClient(messageConfirmData.title, messageConfirmData.message)
+				self._sendMessageConfirmToClient(messageConfirmData.get("title"), messageConfirmData.get("message"))
 
 			self._checkForMissingFilamentTracking()
 			self._checkTasmotaSetup()

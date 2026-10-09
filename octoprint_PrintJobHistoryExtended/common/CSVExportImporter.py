@@ -82,7 +82,7 @@ class DefaultCSVFormattorParser:
 		valueToFormat = getattr(printJob, fieldName)
 
 		adjustedValue = valueToFormat if valueToFormat is not None else '-'
-		if (type(adjustedValue) is int or type(adjustedValue) is float or type(adjustedValue) is str or type(adjustedValue) is unicode):
+		if (type(adjustedValue) is int or type(adjustedValue) is float or type(adjustedValue) is str):
 			adjustedValue = StringUtils.to_native_str(adjustedValue)
 			adjustedValue = adjustedValue.replace('\n', ' ').replace('\r', '')
 		else:
