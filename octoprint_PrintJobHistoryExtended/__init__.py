@@ -3019,17 +3019,12 @@ class PrintJobHistoryExtendedPlugin(
 		return [("POST", r"/upload/", 20 * 1024 * 1024)]  # size in bytes
 
 
-	# # For Streaming I need a special ResponseHandler
-	# def route_hook(self, server_routes, *args, **kwargs):
-	# 	from octoprint.server.util.tornado import LargeResponseHandler, UrlProxyHandler, path_validation_factory
-	# 	from octoprint.util import is_hidden_path
-	#
-	# 	return [
-	# 		# (r'myvideofeed', StreamHandler, dict(url=self._settings.global_get(["webcam", "snapshot"]),
-	# 		# 									 as_attachment=True)),
-	# 		(r"mysnapshot", UrlProxyHandler, dict(url=self._settings.global_get(["webcam", "snapshot"]),
-	# 											 as_attachment=True))
-	# 	]
+	# A commented-out route_hook registering a "mysnapshot" UrlProxyHandler used to sit here.
+	# It was never enabled, yet the edit dialog requested that route to freeze the webcam
+	# picture during the shutter animation, so every "take picture" logged a 404 and the
+	# freeze never happened. The request has been removed; reviving the proxy would also mean
+	# porting it off the global "webcam.snapshot" setting, which OctoPrint 2.0 only keeps as
+	# a deprecated compatibility overlay.
 
 
 # If you want your plugin to be registered within OctoPrint under a different name than what you defined in setup.py

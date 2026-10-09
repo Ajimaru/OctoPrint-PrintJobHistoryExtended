@@ -760,9 +760,10 @@ function PrintJobHistoryExtendedEditDialog(){
             // TAKE SNAPSHOT
             var startShutter = new Date().getTime();
             self.imageDisplayMode(IMAGEDISPLAYMODE_VIDEOSTREAM_WITH_SHUTTER);
-            // freeze video stream -> show current tken snapshot
-            var mySnapshotUrl = self.apiClient.getProxiedSnapshotUrl();
-            $("#printJobHistoryExtended-videoStream").attr("src", mySnapshotUrl);
+            // The stream used to be frozen here by pointing the img at a "mysnapshot" proxy
+            // route, but that route's handler has never been enabled, so the browser only
+            // ever got a 404 and the picture did not freeze. The stream simply keeps running
+            // for the second the shutter animation lasts, which is what already happened.
 
             self.apiClient.callTakeSnapshot(self.printJobItemForEdit.snapshotFilename(), function(responseData){
                 if (responseData["snapshotFilename"] != undefined){

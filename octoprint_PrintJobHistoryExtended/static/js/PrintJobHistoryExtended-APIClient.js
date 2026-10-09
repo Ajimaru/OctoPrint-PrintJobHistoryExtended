@@ -56,11 +56,6 @@ function PrintJobHistoryExtendedAPIClient(pluginId, baseUrl) {
         return _addApiKeyIfNecessary("./plugin/" + this.pluginId + "/exportPrintJobHistory/" + exportType);
     }
 
-    this.getProxiedSnapshotUrl = function(snapshotFilename){
-        http://localhost:5000/plugin/PrintJobHistory/mysnapshot
-        return _addApiKeyIfNecessary("./plugin/" + this.pluginId + "/mysnapshot");
-    }
-
     this.getSnapshotUrl = function(snapshotFilename){
         //http://localhost:5000/plugin/PrintJobHistory/printJobSnapshot/20191003-153311
         return _addApiKeyIfNecessary("./plugin/" + this.pluginId + "/printJobSnapshot/" + snapshotFilename);
