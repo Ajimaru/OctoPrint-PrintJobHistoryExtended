@@ -485,8 +485,11 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
         try:
             printJobPrintable = self._resolvePrintJobFile(printJobModel)
         except Exception as e:
+            # The exception text can carry filesystem paths and backend internals, so it goes
+            # to the log only; the client gets the reason code and a message without detail.
             self._logger.exception("Could not resolve the file of print job '" + str(databaseId) + "': " + str(e))
-            return self._selectionFailed("Could not work out where this file is: " + str(e), "unresolvable", 409)
+            return self._selectionFailed("Could not work out where this file is. See the log for details.",
+                                         "unresolvable", 409)
 
         if (printJobPrintable["isRePrintable"] == False):
             reason = printJobPrintable["notReprintableReason"]
@@ -507,7 +510,8 @@ class PrintJobHistoryExtendedAPI(octoprint.plugin.BlueprintPlugin):
             # A connector that will not take the file, a file that vanished between the check
             # and here - the user gets told instead of a 500 with nothing in the dialog.
             self._logger.exception("Could not select '" + str(storagePath) + "' in '" + str(destination) + "': " + str(e))
-            return self._selectionFailed("Could not select this file for printing: " + str(e), "selectFailed", 409)
+            return self._selectionFailed("Could not select this file for printing. See the log for details.",
+                                         "selectFailed", 409)
 
         return flask.jsonify({"databaseId": databaseId, "storagePath": storagePath})
 
