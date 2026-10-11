@@ -4,7 +4,16 @@ from __future__ import absolute_import
 class SettingsKeys():
 
 	# Filament, spool assignment and material cost all come from this one plugin.
-	PLUGIN_SPOOL_MANAGER = { "key": "SpoolManagerExtended", "minVersion": "2.0.0a1"}
+	# The floor is the whole 2.0.0 line, prereleases included: the job-usage API this
+	# plugin relies on (api_getJobFilamentUsage, print_job_usage_booked) only exists
+	# from SpoolManagerExtended 2.0.0 onwards, and it has been shipping as alpha/dev
+	# builds the entire time. "2.0.0-a0" sorts below every prerelease identifier
+	# semantic_version can coerce - a0, alpha, b1, dev, rc1 - so every 2.0.0 build
+	# qualifies while 1.x stays out. A bare "2.0.0" floor would reject them all,
+	# since a prerelease sorts BELOW its own final release.
+	# "displayVersion" is what the user is told to install; "minVersion" is only ever
+	# fed to the comparator, where "2.0.0-a0" would read as a version nobody can install.
+	PLUGIN_SPOOL_MANAGER = { "key": "SpoolManagerExtended", "minVersion": "2.0.0-a0", "displayVersion": "2.0.0"}
 	# Measured electricity data. Read straight from its SQLite file, so no version floor applies.
 	PLUGIN_TASMOTA = { "key": "tasmota", "minVersion": None}
 	# Optional extras: used when present, never nagged about.

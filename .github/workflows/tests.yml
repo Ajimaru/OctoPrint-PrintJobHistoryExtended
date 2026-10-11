@@ -1,24 +1,37 @@
 name: Tests
+
+# Runs the test suite on every pull request, and on pushes to main so a merge that
+# bypassed the required checks is still verified afterwards.
 on:
   push:
     branches: [main]
   pull_request:
+
+# A force-push or a quick follow-up commit makes the previous run pointless.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
   pytest:
+    # Named so branch protection can require it per interpreter. Renaming this job
+    # renames the status check and silently drops the protection rule on main.
+    name: Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
+      # One failing interpreter should not hide the result of the others.
       fail-fast: false
       matrix:
-        # Lowest and highest supported interpreter; python_requires is >=3.11,<3.15.
-        python-version: ['3.11', '3.13']
+        # Both ends of the supported range plus the development baseline;
+        # python_requires is >=3.11,<3.15.
+        python-version: ['3.11', '3.13', '3.14']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -29,7 +42,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install --pre "OctoPrint==2.0.0rc5" pytest peewee pillow
+          python -m pip install --pre "OctoPrint==2.0.0rc6" pytest peewee pillow
 
       - name: Run tests
         run: python -m pytest octoprint_PrintJobHistoryExtended/test -q

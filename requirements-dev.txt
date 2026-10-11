@@ -16,7 +16,7 @@
 # OctoPrint 1.x is not supported - see __plugin_check__ in the plugin module.
 # The plugin module imports octoprint.plugin at import time, so the test suite
 # needs OctoPrint installed even though it exercises only the plugin's own code.
-OctoPrint==2.0.0rc5
+OctoPrint==2.0.0rc6
 
 # the plugin itself, editable, including its runtime dependencies from setup.py
 --editable .

@@ -338,10 +338,14 @@ class PrintJobHistoryExtendedPlugin(
 	# [0] == status-string
 	# [1] == implementaiton of the plugin
 	# [2] == version of the plugin, as str like 3.3.0
-	# [3] == requiredVersion of the plugin, as str like 1.3.0
+	# [3] == the version to SHOW the user, as str like 1.3.0. Defaults to the comparison
+	#        floor, but a plugin can set "displayVersion" when the two differ - e.g. a
+	#        floor of "2.0.0-a0", which exists only to let every 2.0.0 prerelease pass,
+	#        must not be printed as the version to go and install.
 	def _getPluginInformation(self, pluginInfo):
 		pluginKey = pluginInfo["key"]
 		requiredVersion = pluginInfo["minVersion"]
+		displayVersion = pluginInfo.get("displayVersion", requiredVersion)
 
 		status = None
 		implementation = None
@@ -381,7 +385,7 @@ class PrintJobHistoryExtendedPlugin(
 			if (canBeUsed == False):
 				status = "wrong version"
 				implementation = None
-		return [status, implementation, version, requiredVersion]
+		return [status, implementation, version, displayVersion]
 
 	def _get_comparable_version_semantic(self, version_string, force_base=False):
 		import semantic_version

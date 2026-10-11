@@ -120,7 +120,7 @@ Storage and access:
 Two plugins unlock data this plugin cannot collect on its own. If either is missing, a
 one-time hint points at it; the check can be switched off in the settings.
 
-- [SpoolManagerExtended](https://github.com/Ajimaru/OctoPrint-SpoolManagerExtended) (2.0.0a1+) — filament usage, spool assignment and material cost
+- [SpoolManagerExtended](https://github.com/Ajimaru/OctoPrint-SpoolManagerExtended) (2.0.0+, including its alpha, beta and dev builds) — filament usage, spool assignment and material cost
 - [Tasmota](https://plugins.octoprint.org/plugins/tasmota/) — measured electricity cost
 
 These are used when present and never asked for:
