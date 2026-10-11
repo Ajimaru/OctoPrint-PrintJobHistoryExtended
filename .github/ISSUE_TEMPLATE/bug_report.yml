@@ -40,7 +40,7 @@ body:
     id: octoprint-version
     attributes:
       label: OctoPrint version
-      placeholder: "2.0.0rc5"
+      placeholder: "2.0.0"
     validations:
       required: true
 

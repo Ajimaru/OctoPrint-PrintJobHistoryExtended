@@ -16,7 +16,7 @@ jobs:
 
     steps:
       - name: Check out repository code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0 # full history so --generate-notes can diff against the previous tag
 
@@ -33,7 +33,7 @@ jobs:
           fi
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.13'
 
@@ -43,7 +43,7 @@ jobs:
       - name: Run tests
         run: |
           python -m pip install --upgrade pip
-          python -m pip install --pre "OctoPrint==2.0.0rc5" pytest peewee pillow
+          python -m pip install --pre "OctoPrint==2.0.0rc6" pytest peewee pillow
           python -m pytest octoprint_PrintJobHistoryExtended/test -q
 
       # -i whitelists what goes in, -x drops the test suite and its gcode fixtures:
