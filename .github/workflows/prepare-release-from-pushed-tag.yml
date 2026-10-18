@@ -2,7 +2,17 @@ name: Tag pushed - prepare release
 on:
   push:
     tags:
-      - '[0-9]+.[0-9]+.[0-9]+' # note that these are glob patterns, not regex
+      # Glob patterns, NOT regex. "+" is a literal plus here, so the previous
+      # '[0-9]+.[0-9]+.[0-9]+' matched nothing at all (it wanted a tag like
+      # "2+.0+.0") and no tag push ever started a release.
+      #
+      # Globs cannot express "digits followed by an optional PEP 440 suffix", so
+      # the release/pre-release split is decided by the "Determine prerelease"
+      # step below rather than by two workflows with two patterns. This pattern
+      # is therefore permissive: it matches 2.0.0, 2.0.0a2, 2.0.0rc1 and
+      # 2.0.0a2.dev2 alike. The version check below rejects anything that is not
+      # the version in setup.py, so a stray tag cannot produce a release.
+      - '[0-9]*.[0-9]*.[0-9]*'
 
 jobs:
   # A single job on purpose - more would spin up more runners for no gain.
@@ -32,6 +42,29 @@ jobs:
             exit 1
           fi
 
+      # A pre-release is an a/b/rc/dev segment in the version, PEP 440 style:
+      # 2.0.0a2, 2.0.0rc1, 2.0.0a2.dev2.
+      #
+      # The local part ("+hash") is cut off BEFORE matching. PEP 440 does not
+      # allow a pre-release marker there, and leaving it in makes the detection
+      # depend on the commit hash: "2.0.0+build2b1" would match on "2b1" and be
+      # published as a pre-release even though it is a final version.
+      #
+      # After the cut, the marker must end at the end of the version, so a
+      # ".post1" release stays final.
+      - name: Determine prerelease
+        id: prerelease
+        env:
+          TAG_ID: ${{ github.ref_name }}
+        run: |
+          TAG_LOWER="$(printf '%s' "$TAG_ID" | tr '[:upper:]' '[:lower:]')"
+          VERSION_PART="${TAG_LOWER%%+*}"
+          if echo "$VERSION_PART" | grep -qE '(^|[-.0-9])(a|b|c|rc|alpha|beta|pre|preview|dev)([.-]?[0-9]+)?$'; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
@@ -59,10 +92,44 @@ jobs:
       - name: List the archive contents for debugging
         run: unzip -l main.zip
 
+      # A second copy under a version-independent name, for installing by hand
+      # from a fixed URL in the OctoPrint plugin manager:
+      #   .../releases/latest/download/OctoPrint-PrintJobHistoryExtended-latest.zip
+      #
+      # Only for final releases. "releases/latest" follows the newest release
+      # that is not a pre-release, so attaching this to an alpha would either do
+      # nothing or, worse, hand an alpha to someone who asked for the stable
+      # build. The plugin's own software-update check does not use this file at
+      # all - it resolves {target_version} to the exact release it picked, which
+      # cannot race a newer release the way a floating name can.
+      - name: Add a version-independent copy of the archive
+        if: steps.prerelease.outputs.is_prerelease == 'false'
+        run: cp main.zip OctoPrint-PrintJobHistoryExtended-latest.zip
+
+      # Always a draft, pre-release or not: a release is published by hand once
+      # the generated notes and the attached archive have been read. Pushing a
+      # tag must never publish on its own.
+      #
+      # --generate-notes groups the pull requests by label into the categories
+      # defined in .github/release.yml.
       - name: Create release draft
         env:
           GITHUB_TOKEN: ${{ github.token }}
           VERSIONTAG: ${{ github.ref_name }}
+          IS_PRERELEASE: ${{ steps.prerelease.outputs.is_prerelease }}
         run: |
-          gh release create "$VERSIONTAG" --generate-notes --draft --verify-tag --title "Version $VERSIONTAG (draft)"
-          gh release upload "$VERSIONTAG" main.zip
+          PRERELEASE_FLAG=""
+          if [ "$IS_PRERELEASE" = "true" ]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+          gh release create "$VERSIONTAG" --generate-notes --draft --verify-tag \
+            $PRERELEASE_FLAG --title "Version $VERSIONTAG (draft)"
+
+          # The -latest.zip copy only exists for final releases, so it is added
+          # to the upload only when it is actually there - naming a missing file
+          # would fail the upload and leave a release draft with no archive.
+          ASSETS=(main.zip)
+          if [ -f OctoPrint-PrintJobHistoryExtended-latest.zip ]; then
+            ASSETS+=(OctoPrint-PrintJobHistoryExtended-latest.zip)
+          fi
+          gh release upload "$VERSIONTAG" "${ASSETS[@]}"
