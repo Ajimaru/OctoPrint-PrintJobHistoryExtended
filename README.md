@@ -1,4 +1,14 @@
-# OctoPrint-PrintJobHistoryExtended
+<!-- markdownlint-disable MD033 MD041 -->
+<p align="center">
+  <img
+    src="assets/img/printjobhistoryextended.svg"
+    alt="Print Job History Extended logo"
+    width="64"
+    height="64"
+  />
+</p>
+<h1 align="center">OctoPrint-PrintJobHistoryExtended</h1>
+<!-- markdownlint-enable MD033 MD041 -->
 
 [![License][badge-license]](LICENSE.txt)
 [![Python][badge-python]](https://python.org)
@@ -8,12 +18,12 @@
 [![Downloads][badge-downloads]](https://github.com/Ajimaru/OctoPrint-PrintJobHistoryExtended/releases)
 [![Made with Love][badge-love]](https://github.com/Ajimaru/OctoPrint-PrintJobHistoryExtended)
 
-[badge-license]: https://img.shields.io/github/license/Ajimaru/OctoPrint-PrintJobHistoryExtended?style=flat-square
-[badge-python]: https://img.shields.io/badge/python-3.11%2B-blue.svg?style=flat-square
-[badge-octoprint]: https://img.shields.io/badge/OctoPrint-2.0.0%2B-blue.svg?style=flat-square
-[badge-release]: https://img.shields.io/github/v/release/Ajimaru/OctoPrint-PrintJobHistoryExtended?style=flat-square
-[badge-prerelease]: https://img.shields.io/github/v/release/Ajimaru/OctoPrint-PrintJobHistoryExtended?include_prereleases&label=prerelease&style=flat-square
-[badge-downloads]: https://img.shields.io/github/downloads/Ajimaru/OctoPrint-PrintJobHistoryExtended/total.svg?style=flat-square
+[badge-license]: https://img.shields.io/github/license/Ajimaru/OctoPrint-PrintJobHistoryExtended?style=flat-square&logo=gnu&logoColor=white
+[badge-python]: https://img.shields.io/badge/python-3.11%2B-blue?style=flat-square&logo=python&logoColor=white
+[badge-octoprint]: https://img.shields.io/badge/OctoPrint-2.0.0%2B-1a9f29?style=flat-square&logo=octoprint&logoColor=white
+[badge-release]: https://img.shields.io/github/v/release/Ajimaru/OctoPrint-PrintJobHistoryExtended?sort=semver&style=flat-square&logo=github&logoColor=white
+[badge-prerelease]: https://img.shields.io/github/v/release/Ajimaru/OctoPrint-PrintJobHistoryExtended?include_prereleases&label=prerelease&style=flat-square&logo=github&logoColor=white
+[badge-downloads]: https://img.shields.io/github/downloads/Ajimaru/OctoPrint-PrintJobHistoryExtended/total?style=flat-square&logo=github&logoColor=white&label=downloads
 [badge-love]: https://img.shields.io/badge/made_with-%E2%9D%A4%EF%B8%8F-ff69b4?style=flat-square
 
 An OctoPrint plugin that records every print job — result, duration, temperatures, filament
