@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD033 MD041 -->
 <p align="center">
   <img
-    src="https://github.com/Ajimaru/OctoPrint-PrintJobHistoryExtended/raw/main/assets/img/printjobhistoryextended.svg"
+    src="assets/img/printjobhistoryextended.svg"
     alt="Print Job History Extended logo"
     width="64"
     height="64"
