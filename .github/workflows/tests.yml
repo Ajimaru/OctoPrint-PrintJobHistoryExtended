@@ -37,12 +37,19 @@ jobs:
 
       # OctoPrint is required rather than optional: the plugin module imports
       # octoprint.plugin at import time, so pytest cannot even collect without it.
-      # --pre is needed because OctoPrint 2.0.0 is only available as a release candidate.
+      # The version comes from requirements-dev.txt, the one place for the pin and the
+      # one Dependabot updates. It used to be hard-coded here (2.0.0rc6) and kept
+      # testing against that release candidate after #39 had moved the dev pin to
+      # 2.0.0. If the grep finds no pin, set -e fails the step instead of silently
+      # installing whatever OctoPrint is newest.
       # The plugin is not installed - the tests import it from the working directory.
       - name: Install dependencies
         run: |
+          set -euo pipefail
           python -m pip install --upgrade pip
-          python -m pip install --pre "OctoPrint==2.0.0rc6" pytest peewee pillow
+          OCTOPRINT_PIN=$(grep -E '^OctoPrint==' requirements-dev.txt)
+          echo "Installing $OCTOPRINT_PIN"
+          python -m pip install "$OCTOPRINT_PIN" pytest peewee pillow
 
       - name: Run tests
         run: python -m pytest octoprint_PrintJobHistoryExtended/test -q

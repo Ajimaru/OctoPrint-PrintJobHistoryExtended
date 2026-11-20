@@ -72,11 +72,15 @@ jobs:
 
       # The suite runs in a few seconds and catches a tag pushed from a broken tree.
       # OctoPrint itself is required: the plugin module imports octoprint.plugin at
-      # import time, so the tests cannot collect without it.
+      # import time, so the tests cannot collect without it. The version is read from
+      # requirements-dev.txt, the same pin tests.yml uses (see the comment there).
       - name: Run tests
         run: |
+          set -euo pipefail
           python -m pip install --upgrade pip
-          python -m pip install --pre "OctoPrint==2.0.0rc6" pytest peewee pillow
+          OCTOPRINT_PIN=$(grep -E '^OctoPrint==' requirements-dev.txt)
+          echo "Installing $OCTOPRINT_PIN"
+          python -m pip install "$OCTOPRINT_PIN" pytest peewee pillow
           python -m pytest octoprint_PrintJobHistoryExtended/test -q
 
       # -i whitelists what goes in, -x drops the test suite and its gcode fixtures:

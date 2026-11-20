@@ -7,16 +7,16 @@
 #   brew install python@3.13
 #   /opt/homebrew/opt/python@3.13/bin/python3.13 -m venv .venv
 #   .venv/bin/pip install --upgrade pip
-#   .venv/bin/pip install --pre --no-build-isolation -r requirements-dev.txt
+#   .venv/bin/pip install --no-build-isolation -r requirements-dev.txt
 #
-# `--pre` is required because OctoPrint 2.0.0 is only available as a release candidate.
 # `--no-build-isolation` is required for the editable install below: setup.py imports
 # octoprint_setuptools, which pip's isolated build environment cannot see.
 
 # OctoPrint 1.x is not supported - see __plugin_check__ in the plugin module.
 # The plugin module imports octoprint.plugin at import time, so the test suite
 # needs OctoPrint installed even though it exercises only the plugin's own code.
-OctoPrint==2.0.0
+# This line is also the pin for CI: tests.yml and the release workflow read it from here.
+OctoPrint==2.0.1
 
 # the plugin itself, editable, including its runtime dependencies from setup.py
 --editable .
