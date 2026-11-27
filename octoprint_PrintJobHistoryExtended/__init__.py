@@ -2512,10 +2512,12 @@ class PrintJobHistoryExtendedPlugin(
 					branch="main",
 					commitish=["main"]
 				),
+				# The pre-release channel needs its own key: OctoPrint treats a channel named
+				# like the stable branch as stable. All releases are tagged on main.
 				prerelease_branches=[
 					dict(
 						name="Release & Pre-Release",
-						branch="main",
+						branch="prerelease",
 						commitish=["main"],
 					)
 				],
