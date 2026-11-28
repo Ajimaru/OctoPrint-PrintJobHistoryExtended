@@ -57,9 +57,8 @@ This fork is maintained by [Ajimaru](https://github.com/Ajimaru).
 
 ## Requirements
 
-- **OctoPrint 2.0.0 or newer** — at the time of writing only available as a release
-  candidate. The OctoPrint 1.x branch is **not supported**: pip refuses the installation,
-  and the plugin declines to load on a 1.x core.
+- **OctoPrint 2.0.0 or newer.** The OctoPrint 1.x branch is **not supported**: the plugin
+  declines to load on a 1.x core.
 - **Python 3.11 or newer** (up to 3.14).
 
 ## Installation

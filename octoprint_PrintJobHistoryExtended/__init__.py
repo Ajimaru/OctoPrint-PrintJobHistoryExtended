@@ -3046,10 +3046,10 @@ class PrintJobHistoryExtendedPlugin(
 __plugin_name__ = "Print Job History Extended"
 __plugin_pythoncompat__ = ">=3.11,<3.15"
 
-# setup.py's OctoPrint requirement only guards pip. A plugin folder carried over from a 1.x
-# install bypasses it entirely and would fail later in confusing ways instead:
-# __plugin_check__ is called before the plugin is loaded and refuses the load when it
-# returns False. Note ">=2.0.0" already accepts the 2.0.0 release candidates.
+# OctoPrint is not a pip requirement (pip would upgrade a 1.x core instead of refusing), so
+# this is the only guard against a 1.x core: __plugin_check__ is called before the plugin
+# is loaded and refuses the load when it returns False. Note ">=2.0.0" already accepts the
+# 2.0.0 release candidates.
 OCTOPRINT_COMPAT = ">=2.0.0"
 
 
