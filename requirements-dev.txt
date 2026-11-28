@@ -16,7 +16,7 @@
 # The plugin module imports octoprint.plugin at import time, so the test suite
 # needs OctoPrint installed even though it exercises only the plugin's own code.
 # This line is also the pin for CI: tests.yml and the release workflow read it from here.
-OctoPrint==2.0.1
+OctoPrint==2.0.2
 
 # the plugin itself, editable, including its runtime dependencies from setup.py
 --editable .
