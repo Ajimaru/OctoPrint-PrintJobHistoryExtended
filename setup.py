@@ -35,10 +35,9 @@ plugin_license = "AGPLv3"
 # Any additional requirements besides OctoPrint should be listed here
 # since 7.0.0 no Python 2.7 Support, see https://github.com/python-pillow/Pillow/blob/master/CHANGES.rst
 #  >=6.2.0<7.0.0
-# OctoPrint 1.x is not supported. The current OctoPrint 2.0 releases are release
-# candidates, which pip only considers when the requirement explicitly admits one.
+# OctoPrint itself is left out on purpose: pip would upgrade a 1.x core to 2.x instead of
+# refusing the install. __plugin_check__ declines to load the plugin on 1.x.
 plugin_requires = [
-	"OctoPrint>=2.0.0rc1",
 	"pillow>=11",
 	"peewee>=3.17,<5",
 	"pymysql>=1.1.1",	# mysql driver, pure python so it needs no compiler on a Raspberry Pi; 1.1.1 fixes CVE-2024-36039
